@@ -6,8 +6,12 @@ import re
 import tempfile
 import shutil
 
+# ==========================================
+# UTILITY FUNCTIONS
+# ==========================================
+
 def get_latest_jenkins_log():
-    """Fetches the latest Jenkins build log. Increased to 100 lines for better stack traces."""
+    """Fetches the latest Jenkins build log (last 100 lines)."""
     job_name = os.environ.get('JOB_NAME')
     build_id = os.environ.get('BUILD_ID')
     log_path = f"/var/lib/jenkins/jobs/{job_name}/builds/{build_id}/log"
@@ -15,104 +19,49 @@ def get_latest_jenkins_log():
     try:
         with open(log_path, 'r') as f:
             lines = f.readlines()
-            # Grab 100 lines so the AI can see the line numbers in compiler stack traces
             return "".join(lines[-100:])
     except Exception as e:
         return f"Could not read log: {e}"
 
-def ask_agent(error_log):
-    url = "http://localhost:11434/api/generate"
-    
-    
-    
-    prompt = f"""Task: Provide a 1-line surgical fix for the error in the log.
-    
-    SCHEMA:
-    {{
-        "file_to_edit": "string",
-        "line_number": "integer",
-        "replace_text": "string",
-        "explanation": "string"
-    }}
-
-    CRITICAL RULES:
-    1. **ONE LINE ONLY**: The 'replace_text' MUST be a single line of code. Do not include the function name, braces, or surrounding context.
-    2. **HEADER FIX**: If the error is "not a member of std" (like std::accumulate), the fix is to add a header. 
-       - Target `line_number`: 1
-       - `replace_text`: "#include <numeric>\\n#include <iostream>" (Replace line 1 with the header + the original line 1).
-    3. **NO DUPLICATION**: Do not repeat any code that already exists on other lines.
-
-    Log:
-    {error_log}
-
-    JSON Patch:"""
-
-
-    payload = {
-        "model": "qwen2.5-coder:7b", 
-        "prompt": prompt, 
-        "stream": False,
-        "format": {
-            "type": "object",
-            "properties": {
-                "file_to_edit": { "type": "string" },
-                "line_number": { "type": "integer" },
-                "replace_text": { "type": "string" },
-                "explanation": { "type": "string" }
-            },
-            "required": ["file_to_edit", "line_number", "replace_text", "explanation"]
-        },
-        "options": {
-            "temperature": 0.0,
-            "stop": ["\n\n"] # Stop the model if it tries to keep talking
-        }
-    }
-    
-    response = requests.post(url, json=payload)
-    return response.json().get("response")
-
 def apply_fix_streaming(fix_data):
-    """Enterprise memory-safe file modification using streams."""
+    """Surgical, memory-safe file modification. Pre-pends headers safely."""
     file_path = fix_data.get("file_to_edit")
     line_number = fix_data.get("line_number")
     replace_text = fix_data.get("replace_text")
     
-    print(f"🛠️ Target File: {file_path} (Line {line_number})")
-    
-    # Safety Check 1: File Exists?
     if not os.path.exists(file_path):
         print(f"❌ Safety Abort: File '{file_path}' does not exist.")
         return False
         
-    # Ensure new text has a newline so we don't break file structure
-    if not replace_text.endswith('\n'):
-        replace_text += '\n'
-
-    # Create a temporary file descriptor and path
     temp_fd, temp_path = tempfile.mkstemp()
     line_replaced = False
     
     try:
-        # Open temp file for writing, original file for streaming read
         with os.fdopen(temp_fd, 'w') as temp_file, open(file_path, 'r') as original_file:
             for current_index, current_line in enumerate(original_file):
-                # 0-indexed check
                 if current_index == (line_number - 1):
-                    print(f"🔍 Swapping:\n[-] {current_line.strip()}\n[+] {replace_text.strip()}")
-                    temp_file.write(replace_text)
+                    # SPECIAL C++ HEADER CASE: Prepend instead of replace
+                    if line_number == 1 and "#include" in replace_text:
+                        print(f"🔍 Prepending Header:\n[+] {replace_text.strip()}")
+                        temp_file.write(replace_text)
+                        if not replace_text.endswith('\n'):
+                            temp_file.write('\n')
+                        temp_file.write(current_line)
+                    else:
+                        print(f"🔍 Swapping:\n[-] {current_line.strip()}\n[+] {replace_text.strip()}")
+                        temp_file.write(replace_text)
+                        if not replace_text.endswith('\n'):
+                            temp_file.write('\n')
                     line_replaced = True
                 else:
                     temp_file.write(current_line)
                     
-        # Safety Check 2: Did we actually find the line?
         if line_replaced:
-            # Atomic swap: overwrite the original file with the temporary one
             shutil.move(temp_path, file_path)
-            print("✅ Surgical streaming modification successful.")
             return True
         else:
-            print(f"❌ Safety Abort: Line number {line_number} is out of bounds for this file.")
-            os.remove(temp_path) 
+            print(f"❌ Safety Abort: Line {line_number} is out of bounds.")
+            os.remove(temp_path)
             return False
             
     except Exception as e:
@@ -121,9 +70,16 @@ def apply_fix_streaming(fix_data):
         return False
 
 def create_git_branch(explanation):
-    """Creates a new Git branch, commits the fix, and pushes via secure PAT."""
+    """Commits and pushes the fix to a new branch using IPv4 to avoid GitHub API errors."""
     build_id = os.environ.get('BUILD_ID', 'manual')
     branch_name = f"healer-fix-build-{build_id}"
+    token = os.environ.get('GITHUB_PAT', '').strip()
+    
+    if not token:
+        print("❌ Push aborted: GITHUB_PAT environment variable not found.")
+        return None
+        
+    auth_url = f"https://{token}@github.com/Akhilgit2004/testrepo.git"
     
     try:
         subprocess.run(['git', 'checkout', '-b', branch_name], check=True, capture_output=True)
@@ -131,71 +87,124 @@ def create_git_branch(explanation):
         subprocess.run(['git', 'commit', '-m', f"Auto-fix: {explanation}"], check=True, capture_output=True)
         
         print("☁️ Authenticating and pushing fix to GitHub...")
-        github_token = os.environ.get('GITHUB_PAT')
-        
-        if not github_token:
-            print("❌ Push aborted: GITHUB_PAT environment variable not found in Jenkins.")
-            return None
-            
-        auth_url = f"https://{github_token}@github.com/Akhilgit2004/testrepo.git"
-        subprocess.run(['git', 'push', '--set-upstream', auth_url, branch_name], check=True, capture_output=True)
+        # '-4' forces IPv4, preventing the 'Bad IPv6' error you saw earlier
+        subprocess.run(['git', 'push', '-4', '--set-upstream', auth_url, branch_name], check=True, capture_output=True)
         
         print(f"🌿 Successfully pushed new branch: {branch_name}")
         return branch_name
     except subprocess.CalledProcessError as e:
-        print(f"❌ Git operation failed: {e.stderr.decode()}")
+        print(f"❌ Git push failed: {e.stderr.decode()}")
         return None
+
+# ==========================================
+# MULTI-AGENT ARCHITECTURE
+# ==========================================
+
+def get_diagnosis(error_log):
+    """STAGE 1: Focuses 100% on reasoning and identifying the root cause."""
+    url = "http://localhost:11434/api/generate"
+    prompt = f"""You are a Senior SRE reviewing a CI/CD pipeline failure.
+Analyze the following error log. 
+1. Identify the exact file that is causing the error.
+2. Explain the root cause of the error.
+3. State the exact code needed to fix it (e.g., missing header, syntax error).
+
+LOG:
+{error_log}
+
+DIAGNOSIS:"""
+
+    payload = {
+        "model": "qwen2.5-coder:7b", 
+        "prompt": prompt, 
+        "stream": False, 
+        "options": {"temperature": 0.4}
+    }
+    response = requests.post(url, json=payload)
+    return response.json().get("response")
+
+def get_json_patch(file_content, diagnosis):
+    """STAGE 2: Focuses 100% on generating a strict JSON patch based on the file's actual code."""
+    url = "http://localhost:11434/api/generate"
+    prompt = f"""You are an automated code patcher. 
+
+TARGET FILE CONTENT:{file_content}
+ERROR DIAGNOSIS:
+{diagnosis}
+
+Task: Output a JSON patch to fix the file based on the diagnosis.
+SCHEMA: {{"file_to_edit": "string", "line_number": integer, "replace_text": "string", "explanation": "string"}}
+
+CRITICAL RULES:
+1. Output ONLY JSON. No markdown, no text.
+2. 'line_number' is the exact line to swap (1-indexed). Look at the Target File Content to count the lines.
+3. 'replace_text' must be ONLY the line being changed, with no surrounding code.
+4. If the fix requires adding a C++ header (like <numeric>), target line_number: 1.
+
+JSON PATCH:"""
+
+    payload = {
+        "model": "qwen2.5-coder:7b",
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.0}
+    }
+    response = requests.post(url, json=payload)
+    return response.json().get("response")
+
+# ==========================================
+# MAIN ORCHESTRATOR
+# ==========================================
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚨 HEALER AGENT: INITIATING AUTO-FIX SEQUENCE...")
+    print("🚨 HEALER AGENT: INITIATING TWO-STAGE RECOVERY...")
     
     log_content = get_latest_jenkins_log()
     
-    print("🧠 Consulting Qwen 2.5 Coder on RTX 4060...")
-    raw_response = ask_agent(log_content)
+    # ---------------------------------------------------------
+    # STAGE 1: DIAGNOSIS
+    # ---------------------------------------------------------
+    print("\n🧠 STAGE 1: Analyzing Jenkins Log...")
+    diagnosis = get_diagnosis(log_content)
+    print(f"🔍 ANALYSIS: {diagnosis[:200]}...\n")
     
-    # DEBUG: Let's see what the AI actually said
-    print(f"📡 RAW AI OUTPUT: {raw_response}")
+    # Extract the file name using regex (e.g., app.cpp, app.py)
+    file_match = re.search(r'(\w+\.(cpp|py|java|js))', diagnosis)
+    target_file = file_match.group(1) if file_match else "app.cpp"
+
+    if not os.path.exists(target_file):
+        print(f"⚠️ Could not find target file: {target_file}. Is the regex catching the wrong name?")
+        exit(1)
+
+    # Read the actual broken code
+    with open(target_file, 'r') as f:
+        current_code = f.read()
+    
+    # ---------------------------------------------------------
+    # STAGE 2: FIX GENERATION
+    # ---------------------------------------------------------
+    print(f"🛠️ STAGE 2: Generating JSON patch for {target_file}...")
+    raw_patch = get_json_patch(current_code, diagnosis)
     
     try:
-        fix_data = json.loads(raw_response)
-
-        if "response" in fix_data and isinstance(fix_data["response"], dict):
-            fix_data = fix_data["response"]
-        elif "response" in fix_data and isinstance(fix_data["response"], str):
-             # If it gave us a string summary, we need to treat it as a failure
-             print("❌ AI gave a text summary instead of a patch.")
-
-        # SAFE DATA EXTRACTION (Preventing NoneType crashes)
-        file_path = fix_data.get("file_to_edit")
-        if not os.path.exists(file_path):
-            print(f"⚠️ AI targeted non-existent file: {file_path}")
-            # FORCE the AI to look at the log again specifically for app.cpp
-            if "app.cpp" in log_content:
-                 print("🔄 Redirecting AI attention to app.cpp...")
-                 fix_data["file_to_edit"] = "test.cpp"
-        line_num = fix_data.get("line_number")
-        new_text = fix_data.get("replace_text","")
-        if "int main()" in new_text and line_num > 1:
-            print("⚠️ AI over-generated code. Attempting to extract only the fix...")
-            # Simple heuristic: find the line with 'accumulate' or the actual fix
-            for line in new_text.split('\n'):
-                if "accumulate" in line or "include" in line:
-                    fix_data["replace_text"] = line
-                    break
-        reason = fix_data.get("explanation", "No explanation provided.")
-
-        if not all([file_path, line_num, new_text]):
-            print("❌ AI returned incomplete data. Keys might be missing.")
-            print(f"Keys found: {list(fix_data.keys())}")
-        elif "error" in fix_data:
-            print(f"🛑 AI aborted: {fix_data['error']}")
-        else:
-            print(f"🤖 AI DIAGNOSIS: {reason}")
-            # Run the fix
-            if apply_fix_streaming(fix_data):
-                create_git_branch(reason)
-                    
+        fix_data = json.loads(raw_patch)
+        
+        # Ensure we always target the correct file, even if the AI typo'd it in the JSON
+        fix_data["file_to_edit"] = target_file 
+        
+        print(f"🤖 AI RECOMMENDS: {fix_data.get('explanation', 'Auto-fix generated.')}")
+        
+        # ---------------------------------------------------------
+        # STAGE 3: EXECUTION
+        # ---------------------------------------------------------
+        if apply_fix_streaming(fix_data):
+            print("✅ Code patched locally.")
+            create_git_branch(fix_data.get("explanation", "Auto-fix"))
+            
     except json.JSONDecodeError as e:
-        print(f"❌ Critical JSON Error: {e}")
+        print(f"❌ Critical JSON Parsing Failed: {e}")
+        print(f"Raw Output was:\n{raw_patch}")
+        
+    print("="*50 + "\n")

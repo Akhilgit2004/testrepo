@@ -1,18 +1,25 @@
 pipeline {
     agent any
 
+    // Optional: If you haven't set GITHUB_PAT globally in Jenkins, 
+    // make sure it's injected here or in your Jenkins credentials store.
+    environment {
+        // GITHUB_PAT = credentials('your-github-pat-id') 
+    }
+
     stages {
-        stage('Build Image') {
+        stage('Environment Check') {
             steps {
-                echo "Environment check..."
-                sh "docker build -t healer-agent:latest ."
+                echo "Running pre-flight checks..."
+                // Just a dummy step to show the pipeline starting
+                sh "echo 'Environment looks good.'"
             }
         }
 
         stage('Compile C++ App (Intended to Fail)') {
             steps {
                 echo "Compiling app.cpp..."
-                // This will fail with a C++ compiler error
+                // This is the trigger. It will crash because app.cpp is missing <numeric>
                 sh "g++ app.cpp -o app"
             }
         }
@@ -20,8 +27,15 @@ pipeline {
 
     post {
         failure {
-            echo "🔥 Build failed! Initiating Healer Agent..."
+            echo "🔥 Build failed! Initiating Two-Stage Healer Agent..."
             sh '''
+                # 1. Ensure virtual environment exists
+                python3 -m venv venv
+                
+                # 2. Install dependencies (requests is needed for Ollama API)
+                ./venv/bin/pip install requests
+                
+                # 3. Trigger the Multi-Agent recovery
                 ./venv/bin/python3 healer.py
             '''
         }
