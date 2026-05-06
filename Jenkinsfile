@@ -3,7 +3,7 @@ pipeline {
     stages {
         stage('Compile C++ App') {
             steps {
-                echo "Compiling app.cpp..."
+                echo "Compiling test.cpp..."
                 // This will fail because <numeric> is missing
                 sh "g++ app.cpp -o app"
             }
