@@ -3,9 +3,6 @@ pipeline {
 
     // Optional: If you haven't set GITHUB_PAT globally in Jenkins, 
     // make sure it's injected here or in your Jenkins credentials store.
-    environment {
-        // GITHUB_PAT = credentials('your-github-pat-id') 
-    }
 
     stages {
         stage('Environment Check') {
