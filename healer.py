@@ -21,41 +21,41 @@ def get_latest_jenkins_log():
         return f"Could not read log: {e}"
 
 def ask_agent(error_log):
-    """Dynamically builds a Few-Shot prompt and queries the local Ollama model."""
     url = "http://localhost:11434/api/generate"
     
-    # 1. REFINED PROMPT FOR QWEN 2.5
-    prompt = f"""<system>
-    You are an autonomous SRE Agent. Your task is to fix CI/CD failures by providing a surgical JSON patch.
-    You MUST output a valid JSON object following the EXACT schema below.
-    </system>
+    # 1. ULTR-STRICT PROMPT
+    # We remove the XML tags and use a raw, "Fill-in-the-blank" style
+    prompt = f"""Task: Fix the following code error.
+Output MUST be a JSON object with these exact keys: "file_to_edit", "line_number", "replace_text", "explanation".
 
-    <schema>
-{{
-    "file_to_edit": "string (the relative path to the file)",
-    "line_number": "integer (1-indexed line number)",
-    "replace_text": "string (the full corrected line)",
-    "explanation": "string (brief reasoning)"
-}}
-</schema>
+CRITICAL: 
+- Do NOT summarize the error. 
+- Do NOT use a key named "response".
+- The 'replace_text' must be the full corrected line.
 
-<rules>
-1. Focus on the Python SyntaxError or Compiler Error.
-2. Use the line number provided in the stack trace.
-3. Provide ONLY the JSON. No other text.
-</rules>
-
-<log>
+Failed Log:
 {error_log}
-</log>
-"""
-    
+
+JSON Patch:"""
+
     payload = {
         "model": "qwen2.5-coder:7b", 
         "prompt": prompt, 
         "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.0}
+        "format": {
+            "type": "object",
+            "properties": {
+                "file_to_edit": { "type": "string" },
+                "line_number": { "type": "integer" },
+                "replace_text": { "type": "string" },
+                "explanation": { "type": "string" }
+            },
+            "required": ["file_to_edit", "line_number", "replace_text", "explanation"]
+        },
+        "options": {
+            "temperature": 0.0,
+            "stop": ["\n\n"] # Stop the model if it tries to keep talking
+        }
     }
     
     response = requests.post(url, json=payload)
@@ -150,7 +150,13 @@ if __name__ == "__main__":
     
     try:
         fix_data = json.loads(raw_response)
-        
+
+        if "response" in fix_data and isinstance(fix_data["response"], dict):
+            fix_data = fix_data["response"]
+        elif "response" in fix_data and isinstance(fix_data["response"], str):
+             # If it gave us a string summary, we need to treat it as a failure
+             print("❌ AI gave a text summary instead of a patch.")
+                   
         # SAFE DATA EXTRACTION (Preventing NoneType crashes)
         file_path = fix_data.get("file_to_edit")
         line_num = fix_data.get("line_number")
