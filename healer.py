@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import subprocess
+import re  # <-- NEW: Required for robust JSON extraction
 
 def get_latest_jenkins_log():
     job_name = os.environ.get('JOB_NAME')
@@ -18,16 +19,20 @@ def get_latest_jenkins_log():
 def ask_codegemma(error_log):
     url = "http://localhost:11434/api/generate"
     
-    # 1. Structured Prompting: We demand JSON output
+    # UPGRADED PROMPT: Added strict rules for JSON escaping and focus.
     prompt = f"""You are an autonomous DevOps agent. Analyze this Jenkins build error.
-You must respond with ONLY a valid JSON object. Do not include markdown formatting or explanations outside the JSON.
+You must respond with ONLY a valid JSON object.
+
+CRITICAL RULES:
+1. Do NOT use invalid JSON escape sequences like \\' inside strings. Use standard single quotes without escaping.
+2. Focus on the core infrastructure/Docker error, ignore shell escaping syntax in the logs.
 
 Format exactly like this:
 {{
     "file_to_edit": "Jenkinsfile",
-    "search_text": "text to find",
-    "replace_text": "text to replace with",
-    "explanation": "short reason for the change"
+    "search_text": "exact broken text to find",
+    "replace_text": "new corrected text",
+    "explanation": "short reason"
 }}
 
 Error Log:
@@ -45,7 +50,6 @@ def apply_fix(fix_data):
     
     print(f"🛠️ Target File: {file_path}")
     
-    # 2. Safety Check: Does the file exist and contain the text?
     if not os.path.exists(file_path):
         print(f"❌ Safety Abort: File '{file_path}' does not exist.")
         return False
@@ -54,10 +58,9 @@ def apply_fix(fix_data):
         content = f.read()
         
     if search_text not in content:
-        print(f"❌ Safety Abort: Could not find '{search_text}' in the file.")
+        print(f"❌ Safety Abort: Could not find exactly:\n'{search_text}'\n...in the file.")
         return False
         
-    # 3. Execution: Apply the change
     content = content.replace(search_text, replace_text)
     with open(file_path, 'w') as f:
         f.write(content)
@@ -65,7 +68,6 @@ def apply_fix(fix_data):
     return True
 
 def create_git_branch(explanation):
-    # 4. Version Control: Create a new branch for the fix
     build_id = os.environ.get('BUILD_ID', 'manual')
     branch_name = f"healer-fix-build-{build_id}"
     
@@ -88,20 +90,26 @@ if __name__ == "__main__":
     print("🧠 Consulting CodeGemma on RTX 4060...")
     raw_response = ask_codegemma(log_content)
     
-    # AI models often wrap JSON in markdown blockticks, so we strip them out
-    clean_json = raw_response.strip().removeprefix("```json").removesuffix("```").strip()
+    # UPGRADED PARSING: Use Regex to find everything between { and }
+    json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
     
-    try:
-        # Attempt to parse the AI's response into a Python dictionary
-        fix_data = json.loads(clean_json)
-        print(f"🤖 AI DIAGNOSIS: {fix_data['explanation']}")
+    if json_match:
+        clean_json = json_match.group(0)
+        # SANITIZATION: Strip out the illegal backslash-escaped single quotes
+        clean_json = clean_json.replace("\\'", "'")
         
-        # If the file edit is successful, commit it to Git
-        if apply_fix(fix_data):
-            create_git_branch(fix_data['explanation'])
+        try:
+            fix_data = json.loads(clean_json)
+            print(f"🤖 AI DIAGNOSIS: {fix_data['explanation']}")
             
-    except json.JSONDecodeError:
-        print("❌ AI returned invalid JSON. Cannot apply fix.")
+            if apply_fix(fix_data):
+                create_git_branch(fix_data['explanation'])
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON Parsing Failed: {e}")
+            print(f"Sanitized JSON attempted: {clean_json}")
+    else:
+        print("❌ AI failed to return a JSON object.")
         print(f"Raw output: {raw_response}")
         
     print("="*50 + "\n")
