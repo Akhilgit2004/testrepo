@@ -1,32 +1,23 @@
 pipeline {
     agent any
-
     stages {
-        stage('Build Image') {
+        stage('Compile C++ App') {
             steps {
-                echo "Building Docker Image (Environment check)..."
-                sh "docker build -t healer-agent:latest ."
+                echo "Compiling app.cpp..."
+                // This will fail because <numeric> is missing
+                sh "g++ app.cpp -o app"
             }
         }
-
-        stage('Test Application (Intended to Fail)') {
+        stage('Run App') {
             steps {
-                echo "Running application tests..."
-                // This will crash because app.py has a missing parenthesis
-                sh "python3 test.py"
+                sh "./app"
             }
         }
     }
-
     post {
         failure {
-            echo "🔥 Build failed! Initiating Qwen2.5-Coder Healer Agent..."
+            echo "🚨 Compilation Failed. Summoning Healer..."
             sh '''
-                # Initialize Python Virtual Environment for the Agent
-                python3 -m venv venv
-                ./venv/bin/pip install requests
-                
-                # Execute the Agent
                 ./venv/bin/python3 healer.py
             '''
         }
