@@ -24,7 +24,7 @@ def get_latest_jenkins_log():
         return f"Could not read log: {e}"
 
 def apply_fix_streaming(fix_data):
-    """Surgical, memory-safe file modification. Pre-pends headers safely."""
+    """Surgical, memory-safe file modification with Smart Indentation."""
     file_path = fix_data.get("file_to_edit")
     line_number = fix_data.get("line_number")
     replace_text = fix_data.get("replace_text")
@@ -40,7 +40,7 @@ def apply_fix_streaming(fix_data):
         with os.fdopen(temp_fd, 'w') as temp_file, open(file_path, 'r') as original_file:
             for current_index, current_line in enumerate(original_file):
                 if current_index == (line_number - 1):
-                    # SPECIAL C++ HEADER CASE: Prepend instead of replace
+                    # 1. SPECIAL C++ HEADER CASE
                     if line_number == 1 and "#include" in replace_text:
                         print(f"🔍 Prepending Header:\n[+] {replace_text.strip()}")
                         temp_file.write(replace_text)
@@ -48,10 +48,17 @@ def apply_fix_streaming(fix_data):
                             temp_file.write('\n')
                         temp_file.write(current_line)
                     else:
-                        print(f"🔍 Swapping:\n[-] {current_line.strip()}\n[+] {replace_text.strip()}")
-                        temp_file.write(replace_text)
-                        if not replace_text.endswith('\n'):
-                            temp_file.write('\n')
+                        # 2. SMART INDENTATION MATCHING
+                        # Extract the exact whitespace from the start of the original line
+                        leading_spaces = current_line[:len(current_line) - len(current_line.lstrip())]
+                        
+                        # Strip any messy whitespace the AI tried to add
+                        clean_text = replace_text.lstrip()
+                        
+                        print(f"🔍 Swapping:\n[-] {current_line.rstrip()}\n[+] {leading_spaces}{clean_text}")
+                        
+                        # Write it with perfect original indentation
+                        temp_file.write(leading_spaces + clean_text + '\n')
                     line_replaced = True
                 else:
                     temp_file.write(current_line)
