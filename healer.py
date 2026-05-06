@@ -24,68 +24,37 @@ def ask_agent(error_log):
     """Dynamically builds a Few-Shot prompt and queries the local Ollama model."""
     url = "http://localhost:11434/api/generate"
     
-    # 1. DYNAMIC CONTEXT
-    error_lower = error_log.lower()
-    if "docker" in error_lower or "pull access" in error_lower:
-        context_hint = "This is a Docker/Infrastructure failure. Focus on image names, tags, and Dockerfile syntax."
-    elif "javac" in error_lower or "maven" in error_lower:
-        context_hint = "This is a Java build failure. Focus on standard Java syntax, missing semicolons, or undefined variables."
-    elif "gcc" in error_lower or "g++" in error_lower or "make" in error_lower:
-        context_hint = "This is a C/C++ compilation error. Focus on syntax, pointers, and memory leaks."
-    elif "python" in error_lower or "traceback" in error_lower:
-        context_hint = "This is a Python runtime error. Focus on indentation, missing imports, and logic bugs."
-    else:
-        context_hint = "This is a general CI/CD pipeline failure. Find the core error and fix it."
+    # 1. REFINED PROMPT FOR QWEN 2.5
+    prompt = f"""<system>
+    You are an autonomous SRE Agent. Your task is to fix CI/CD failures by providing a surgical JSON patch.
+    You MUST output a valid JSON object following the EXACT schema below.
+    </system>
 
-    # 2. SYSTEM ROLE & CONSTRAINTS
-    prompt = f"""You are 'Healer', an elite, autonomous Site Reliability Engineer (SRE).
-Your sole purpose is to read failed CI/CD logs, identify the root cause, and output a JSON patch to fix the code.
-
-CONTEXT:
-{context_hint}
-
-CRITICAL RULES:
-1. OUTPUT ONLY JSON. No introductory text, no markdown formatting (do not use ```json).
-2. `line_number` MUST BE AN INTEGER representing the exact line where the error occurred (1-indexed). Look for file paths and line numbers in the stack trace.
-3. `replace_text` must contain the FULL, corrected line of code.
-4. NO ESCAPED SINGLE QUOTES. Do not use \\' inside your JSON strings. Use standard single quotes.
-5. If you cannot confidently fix the error, or the error is too complex, output EXACTLY: {{"error": "Manual intervention required"}}
-
-
-EXAMPLE 1 (Docker Infrastructure):
+    <schema>
 {{
-    "file_to_edit": "Jenkinsfile",
-    "line_number": 14,
-    "replace_text": "sh 'docker run --rm healer-agent:latest'",
-    "explanation": "Corrected misspelled Docker image."
+    "file_to_edit": "string (the relative path to the file)",
+    "line_number": "integer (1-indexed line number)",
+    "replace_text": "string (the full corrected line)",
+    "explanation": "string (brief reasoning)"
 }}
+</schema>
 
-EXAMPLE 2 (Python Syntax Error):
-{{
-    "file_to_edit": "src/main.py",
-    "line_number": 42,
-    "replace_text": "    print('Hello world')",
-    "explanation": "Added missing closing parenthesis."
-}}
+<rules>
+1. Focus on the Python SyntaxError or Compiler Error.
+2. Use the line number provided in the stack trace.
+3. Provide ONLY the JSON. No other text.
+</rules>
 
-EXAMPLE 3 (C++ Compilation Error):
-{{
-    "file_to_edit": "src/app.cpp",
-    "line_number": 105,
-    "replace_text": "int count = 0;",
-    "explanation": "Added missing semicolon."
-}}
-
-ANALYZE THIS LOG AND GENERATE THE JSON FIX:
+<log>
 {error_log}
+</log>
 """
     
-    # 3. EXECUTION (Temperature 0.1 for strict, deterministic JSON generation)
     payload = {
         "model": "qwen2.5-coder:7b", 
         "prompt": prompt, 
         "stream": False,
-        "format": "json",         
+        "format": "json",
         "options": {"temperature": 0.0}
     }
     
@@ -169,38 +138,35 @@ def create_git_branch(explanation):
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("HEALER AGENT: INITIATING AUTO-FIX SEQUENCE")
+    print("🚨 HEALER AGENT: INITIATING AUTO-FIX SEQUENCE...")
     
     log_content = get_latest_jenkins_log()
     
-    print("Consulting Agent")
+    print("🧠 Consulting Qwen 2.5 Coder on RTX 4060...")
     raw_response = ask_agent(log_content)
     
-    # Robust Regex Extraction
-    json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+    # DEBUG: Let's see what the AI actually said
+    print(f"📡 RAW AI OUTPUT: {raw_response}")
     
-    if json_match:
-        clean_json = json_match.group(0).replace("\\'", "'")
+    try:
+        fix_data = json.loads(raw_response)
         
-        try:
-            fix_data = json.loads(clean_json)
-            
-            # Bail-out condition check
-            if "error" in fix_data:
-                print(f"🛑 AI aborted fix: {fix_data['error']}")
-            else:
-                diagnosis = fix_data.get('explanation', 'No explanation provided by AI.')
-                print(f"🤖 AI DIAGNOSIS: {diagnosis}")
-                
-                # Execute the streaming fix and Git push
-                if apply_fix_streaming(fix_data):
-                    create_git_branch(fix_data['explanation'])
+        # SAFE DATA EXTRACTION (Preventing NoneType crashes)
+        file_path = fix_data.get("file_to_edit")
+        line_num = fix_data.get("line_number")
+        new_text = fix_data.get("replace_text")
+        reason = fix_data.get("explanation", "No explanation provided.")
+
+        if not all([file_path, line_num, new_text]):
+            print("❌ AI returned incomplete data. Keys might be missing.")
+            print(f"Keys found: {list(fix_data.keys())}")
+        elif "error" in fix_data:
+            print(f"🛑 AI aborted: {fix_data['error']}")
+        else:
+            print(f"🤖 AI DIAGNOSIS: {reason}")
+            # Run the fix
+            if apply_fix_streaming(fix_data):
+                create_git_branch(reason)
                     
-        except json.JSONDecodeError as e:
-            print(f"❌ JSON Parsing Failed: {e}")
-            print(f"Sanitized JSON attempted:\n{clean_json}")
-    else:
-        print("❌ AI failed to return a JSON object.")
-        print(f"Raw output:\n{raw_response}")
-        
-    print("="*50 + "\n")
+    except json.JSONDecodeError as e:
+        print(f"❌ Critical JSON Error: {e}")
