@@ -17,13 +17,18 @@ pipeline {
     }
     // This is the Watcher. It runs after all stages are complete.
     post {
-        failure {
-            echo "🔥 Build failed! Waking up the Healer Agent..."
-            // We run the python script directly on the Jenkins host
-            sh 'python3 healer.py'
-        }
-        success {
-            echo "✅ Build passed! Agent remains asleep."
+    failure {
+        echo "🔥 Build failed! Setting up Healer environment for Jenkins user..."
+        sh '''
+            # 1. Create a venv inside the Jenkins workspace
+            python3 -m venv venv
+            
+            # 2. Use the venv's pip to install requests
+            ./venv/bin/pip install requests
+            
+            # 3. Use the venv's python to run your healer script
+            ./venv/bin/python3 healer.py
+        '''
         }
     }
 }
