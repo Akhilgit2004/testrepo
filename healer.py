@@ -73,10 +73,18 @@ def create_git_branch(explanation):
     branch_name = f"healer-fix-build-{build_id}"
     
     try:
+        # Create branch
         subprocess.run(['git', 'checkout', '-b', branch_name], check=True, capture_output=True)
+        # Add changes
         subprocess.run(['git', 'add', '-u'], check=True, capture_output=True)
+        # Commit
         subprocess.run(['git', 'commit', '-m', f"Auto-fix: {explanation}"], check=True, capture_output=True)
-        print(f"🌿 Created new branch and committed fix: {branch_name}")
+        
+        # NEW: Push the branch to GitHub!
+        print("☁️ Pushing fix to GitHub...")
+        subprocess.run(['git', 'push', '--set-upstream', 'origin', branch_name], check=True, capture_output=True)
+        
+        print(f"🌿 Successfully pushed new branch: {branch_name}")
         return branch_name
     except subprocess.CalledProcessError as e:
         print(f"❌ Git operation failed: {e.stderr.decode()}")
