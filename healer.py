@@ -32,6 +32,7 @@ CRITICAL:
 - Do NOT summarize the error. 
 - Do NOT use a key named "response".
 - The 'replace_text' must be the full corrected line.
+- The CI/CD pipeline file is named exactly "Jenkinsfile".
 
 Failed Log:
 {error_log}
