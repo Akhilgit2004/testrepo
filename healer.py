@@ -20,7 +20,7 @@ def get_latest_jenkins_log():
     except Exception as e:
         return f"Could not read log: {e}"
 
-def ask_codegemma(error_log):
+def ask_agent(error_log):
     """Dynamically builds a Few-Shot prompt and queries the local Ollama model."""
     url = "http://localhost:11434/api/generate"
     
@@ -81,10 +81,11 @@ ANALYZE THIS LOG AND GENERATE THE JSON FIX:
     
     # 3. EXECUTION (Temperature 0.1 for strict, deterministic JSON generation)
     payload = {
-        "model": "codegemma:7b", 
+        "model": "qwen2.5-coder:7b", 
         "prompt": prompt, 
         "stream": False,
-        "options": {"temperature": 0.1}
+        "format": "json",         
+        "options": {"temperature": 0.0}
     }
     
     response = requests.post(url, json=payload)
@@ -167,12 +168,12 @@ def create_git_branch(explanation):
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚨 HEALER AGENT: INITIATING AUTO-FIX SEQUENCE...")
+    print("HEALER AGENT: INITIATING AUTO-FIX SEQUENCE")
     
     log_content = get_latest_jenkins_log()
     
-    print("🧠 Consulting CodeGemma on RTX 4060...")
-    raw_response = ask_codegemma(log_content)
+    print("Consulting Agent")
+    raw_response = ask_agent(log_content)
     
     # Robust Regex Extraction
     json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
