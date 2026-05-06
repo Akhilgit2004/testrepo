@@ -23,21 +23,30 @@ def get_latest_jenkins_log():
 def ask_agent(error_log):
     url = "http://localhost:11434/api/generate"
     
-    # 1. ULTR-STRICT PROMPT
-    # We remove the XML tags and use a raw, "Fill-in-the-blank" style
-    prompt = f"""Task: Fix the following code error. 
-Output MUST be a JSON object with these exact keys: "file_to_edit", "line_number", "replace_text", "explanation".
+    
+    
+    prompt = f"""Task: Provide a 1-line surgical fix for the error in the log.
+    
+    SCHEMA:
+    {{
+        "file_to_edit": "string",
+        "line_number": "integer",
+        "replace_text": "string",
+        "explanation": "string"
+    }}
 
-CRITICAL RULES:
-1. **Surgical Precision**: Only provide the code for that specific line. Do NOT provide the whole function or multiple lines.
-2. **Missing Headers (C++/Java)**: If a header (like #include) is missing, target **Line 1** of the file. Your 'replace_text' should be the new header followed by a newline and the original Line 1.
-3. **Compiler Errors**: If 'std::accumulate' is undefined, you need the <numeric> header. Target Line 1.
-4. **No Duplication**: Do not repeat code that is already in the file.
+    CRITICAL RULES:
+    1. **ONE LINE ONLY**: The 'replace_text' MUST be a single line of code. Do not include the function name, braces, or surrounding context.
+    2. **HEADER FIX**: If the error is "not a member of std" (like std::accumulate), the fix is to add a header. 
+       - Target `line_number`: 1
+       - `replace_text`: "#include <numeric>\\n#include <iostream>" (Replace line 1 with the header + the original line 1).
+    3. **NO DUPLICATION**: Do not repeat any code that already exists on other lines.
 
-Failed Log:
-{error_log}
+    Log:
+    {error_log}
 
-JSON Patch:"""
+    JSON Patch:"""
+
 
     payload = {
         "model": "qwen2.5-coder:7b", 
