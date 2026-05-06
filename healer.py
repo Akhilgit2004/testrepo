@@ -25,14 +25,14 @@ def ask_agent(error_log):
     
     # 1. ULTR-STRICT PROMPT
     # We remove the XML tags and use a raw, "Fill-in-the-blank" style
-    prompt = f"""Task: Fix the following code error.
+    prompt = f"""Task: Fix the following code error. 
 Output MUST be a JSON object with these exact keys: "file_to_edit", "line_number", "replace_text", "explanation".
 
-CRITICAL: 
-- Do NOT summarize the error. 
-- Do NOT use a key named "response".
-- The 'replace_text' must be the full corrected line.
-- The CI/CD pipeline file is named exactly "Jenkinsfile".
+CRITICAL RULES:
+1. **SOURCE CODE FIRST**: If the error is a compiler error (like g++ or python3), you MUST edit the source file (e.g., app.cpp, app.py), NOT the Jenkinsfile.
+2. **NO GRACEFUL FAILURES**: Do not attempt to "handle failures gracefully" or add echo statements. Fix the actual logic/syntax error.
+3. **FILE VERIFICATION**: If the log says 'error in app.cpp', your 'file_to_edit' MUST be 'app.cpp'.
+4. Do NOT use a key named "response".
 
 Failed Log:
 {error_log}
@@ -160,6 +160,12 @@ if __name__ == "__main__":
 
         # SAFE DATA EXTRACTION (Preventing NoneType crashes)
         file_path = fix_data.get("file_to_edit")
+        if not os.path.exists(file_path):
+            print(f"⚠️ AI targeted non-existent file: {file_path}")
+            # FORCE the AI to look at the log again specifically for app.cpp
+            if "app.cpp" in log_content:
+                 print("🔄 Redirecting AI attention to app.cpp...")
+                 fix_data["file_to_edit"] = "app.cpp"
         line_num = fix_data.get("line_number")
         new_text = fix_data.get("replace_text")
         reason = fix_data.get("explanation", "No explanation provided.")
