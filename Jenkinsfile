@@ -1,22 +1,26 @@
 pipeline {
     agent any
+
     stages {
-        stage('Compile C++ App') {
+        stage('Build Image') {
             steps {
-                echo "Compiling test.cpp..."
-                // This will fail because <numeric> is missing
+                echo "Environment check..."
+                sh "docker build -t healer-agent:latest ."
+            }
+        }
+
+        stage('Compile C++ App (Intended to Fail)') {
+            steps {
+                echo "Compiling app.cpp..."
+                // This will fail with a C++ compiler error
                 sh "g++ app.cpp -o app"
             }
         }
-        stage('Run App') {
-            steps {
-                sh "./app"
-            }
-        }
     }
+
     post {
         failure {
-            echo "🚨 Compilation Failed. Summoning Healer..."
+            echo "🔥 Build failed! Initiating Healer Agent..."
             sh '''
                 ./venv/bin/python3 healer.py
             '''
