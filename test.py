@@ -1,6 +1,7 @@
-def calculate_total(a, b):
-print("Calculating...")
-    return a + b
+def get_last_item(items):
+    last_index = len(items) 
+    return items[last_index]
 
 if __name__ == "__main__":
-    calculate_total(5, 10)
+    my_list = ["apple", "banana", "cherry"]
+    print(get_last_item(my_list))

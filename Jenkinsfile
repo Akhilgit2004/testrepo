@@ -13,11 +13,9 @@ pipeline {
             }
         }
 
-        stage('Compile C++ App (Intended to Fail)') {
+        stage('Test App') {
             steps {
-                echo "Compiling app.cpp..."
-                // This is the trigger. It will crash because app.cpp is missing <numeric>
-                sh "g++ app.cpp -o app"
+                sh "python3 test.py" 
             }
         }
     }
