@@ -176,7 +176,14 @@ if __name__ == "__main__":
                  print("🔄 Redirecting AI attention to app.cpp...")
                  fix_data["file_to_edit"] = "test.cpp"
         line_num = fix_data.get("line_number")
-        new_text = fix_data.get("replace_text")
+        new_text = fix_data.get("replace_text","")
+        if "int main()" in new_text and line_num > 1:
+            print("⚠️ AI over-generated code. Attempting to extract only the fix...")
+            # Simple heuristic: find the line with 'accumulate' or the actual fix
+            for line in new_text.split('\n'):
+                if "accumulate" in line or "include" in line:
+                    fix_data["replace_text"] = line
+                    break
         reason = fix_data.get("explanation", "No explanation provided.")
 
         if not all([file_path, line_num, new_text]):
