@@ -24,7 +24,7 @@ def get_latest_jenkins_log():
         return f"Could not read log: {e}"
 
 def apply_fix_streaming(fix_data):
-    """Surgical, memory-safe file modification with Smart Indentation."""
+    """Surgical, memory-safe file modification with Smart Indentation and Universal Prepend."""
     file_path = fix_data.get("file_to_edit")
     line_number = fix_data.get("line_number")
     replace_text = fix_data.get("replace_text")
@@ -36,19 +36,23 @@ def apply_fix_streaming(fix_data):
     temp_fd, temp_path = tempfile.mkstemp()
     line_replaced = False
     
+    # Define keywords that should always be prepended at the top (Line 1)
+    top_level_keywords = ["#include", "import ", "from ", "package "]
+    is_top_level_fix = any(k in replace_text for k in top_level_keywords)
+    
     try:
         with os.fdopen(temp_fd, 'w') as temp_file, open(file_path, 'r') as original_file:
             for current_index, current_line in enumerate(original_file):
                 if current_index == (line_number - 1):
-                    # 1. SPECIAL C++ HEADER CASE
-                    if line_number == 1 and "#include" in replace_text:
-                        print(f"🔍 Prepending Header:\n[+] {replace_text.strip()}")
+                    # 1. UNIVERSAL PREPEND: For libraries/headers at Line 1, don't delete the original line!
+                    if line_number == 1 and is_top_level_fix:
+                        print(f"🔍 Prepending Library/Header:\n[+] {replace_text.strip()}")
                         temp_file.write(replace_text)
                         if not replace_text.endswith('\n'):
                             temp_file.write('\n')
-                        temp_file.write(current_line)
+                        temp_file.write(current_line) # Keep the original Line 1
                     else:
-                        # 2. SMART INDENTATION MATCHING
+                        # 2. SMART INDENTATION MATCHING for standard swaps
                         # Extract the exact whitespace from the start of the original line
                         leading_spaces = current_line[:len(current_line) - len(current_line.lstrip())]
                         
@@ -146,7 +150,7 @@ CRITICAL RULES:
 1. Output ONLY JSON. No markdown, no text.
 2. 'line_number' is the exact line to swap (1-indexed). Look at the Target File Content to count the lines.
 3. 'replace_text' must be ONLY the line being changed, with no surrounding code.
-4. If the fix requires adding a C++ header (like <numeric>), target line_number: 1.
+4. If the fix requires an import (Python) or header (C++), ALWAYS target line_number: 1.
 
 JSON PATCH:"""
 
