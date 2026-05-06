@@ -50,7 +50,7 @@ CRITICAL RULES:
 3. `replace_text` must contain the FULL, corrected line of code.
 4. NO ESCAPED SINGLE QUOTES. Do not use \\' inside your JSON strings. Use standard single quotes.
 5. If you cannot confidently fix the error, or the error is too complex, output EXACTLY: {{"error": "Manual intervention required"}}
-6. You MUST include an "explanation" key briefly describing the fix.
+
 
 EXAMPLE 1 (Docker Infrastructure):
 {{
@@ -189,7 +189,8 @@ if __name__ == "__main__":
             if "error" in fix_data:
                 print(f"🛑 AI aborted fix: {fix_data['error']}")
             else:
-                print(f"🤖 AI DIAGNOSIS: {fix_data['explanation']}")
+                diagnosis = fix_data.get('explanation', 'No explanation provided by AI.')
+                print(f"🤖 AI DIAGNOSIS: {diagnosis}")
                 
                 # Execute the streaming fix and Git push
                 if apply_fix_streaming(fix_data):
