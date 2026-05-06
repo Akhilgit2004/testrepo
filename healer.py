@@ -29,10 +29,10 @@ def ask_agent(error_log):
 Output MUST be a JSON object with these exact keys: "file_to_edit", "line_number", "replace_text", "explanation".
 
 CRITICAL RULES:
-1. **SOURCE CODE FIRST**: If the error is a compiler error (like g++ or python3), you MUST edit the source file (e.g., app.cpp, app.py), NOT the Jenkinsfile.
-2. **NO GRACEFUL FAILURES**: Do not attempt to "handle failures gracefully" or add echo statements. Fix the actual logic/syntax error.
-3. **FILE VERIFICATION**: If the log says 'error in app.cpp', your 'file_to_edit' MUST be 'app.cpp'.
-4. Do NOT use a key named "response".
+1. **Surgical Precision**: Only provide the code for that specific line. Do NOT provide the whole function or multiple lines.
+2. **Missing Headers (C++/Java)**: If a header (like #include) is missing, target **Line 1** of the file. Your 'replace_text' should be the new header followed by a newline and the original Line 1.
+3. **Compiler Errors**: If 'std::accumulate' is undefined, you need the <numeric> header. Target Line 1.
+4. **No Duplication**: Do not repeat code that is already in the file.
 
 Failed Log:
 {error_log}
