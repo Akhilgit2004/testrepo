@@ -1,5 +1,5 @@
 def calculate_total(a, b):
-    print("Calculating..."  # <-- Missing closing parenthesis!
+print("Calculating...")
     return a + b
 
 if __name__ == "__main__":
