@@ -73,16 +73,24 @@ def create_git_branch(explanation):
     branch_name = f"healer-fix-build-{build_id}"
     
     try:
-        # Create branch
         subprocess.run(['git', 'checkout', '-b', branch_name], check=True, capture_output=True)
-        # Add changes
         subprocess.run(['git', 'add', '-u'], check=True, capture_output=True)
-        # Commit
         subprocess.run(['git', 'commit', '-m', f"Auto-fix: {explanation}"], check=True, capture_output=True)
         
-        # NEW: Push the branch to GitHub!
-        print("☁️ Pushing fix to GitHub...")
-        subprocess.run(['git', 'push', '--set-upstream', 'origin', branch_name], check=True, capture_output=True)
+        # --- NEW PUSH LOGIC ---
+        print("☁️ Authenticating and pushing fix to GitHub...")
+        github_token = os.environ.get('GITHUB_PAT')
+        
+        if not github_token:
+            print("❌ Push aborted: GITHUB_PAT environment variable not found in Jenkins.")
+            return None
+            
+        # Construct the authenticated URL dynamically
+        auth_url = f"https://{github_token}@github.com/Akhilgit2004/testrepo.git"
+        
+        # Push to the authenticated URL instead of 'origin'
+        subprocess.run(['git', 'push', '--set-upstream', auth_url, branch_name], check=True, capture_output=True)
+        # ----------------------
         
         print(f"🌿 Successfully pushed new branch: {branch_name}")
         return branch_name
