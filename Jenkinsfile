@@ -13,9 +13,9 @@ pipeline {
             }
         }
 
-        stage('Compile App') {
+        stage('Test App') {
             steps {
-                sh "g++ app.cpp -o app" // This will throw an "undeclared identifier" error
+                sh "python3 test.py" // This will throw a NameError
             }
         }
     }

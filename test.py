@@ -1,7 +1,6 @@
-def get_last_item(items):
-    last_index = len(items) 
-    return items[last_index]
+def calculate_area(radius):
+  
+    return math.pi * (radius ** 2)
 
 if __name__ == "__main__":
-    my_list = ["apple", "banana", "cherry"]
-    print(get_last_item(my_list))
+    print(f"Area is: {calculate_area(5)}")
