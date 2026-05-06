@@ -19,20 +19,20 @@ def get_latest_jenkins_log():
 def ask_codegemma(error_log):
     url = "http://localhost:11434/api/generate"
     
-    # UPGRADED PROMPT: Added strict rules for JSON escaping and focus.
+    # UPGRADED PROMPT: Added a "One-Shot Example" and "Minimal Match" rules
     prompt = f"""You are an autonomous DevOps agent. Analyze this Jenkins build error.
 You must respond with ONLY a valid JSON object.
 
 CRITICAL RULES:
-1. Do NOT use invalid JSON escape sequences like \\' inside strings. Use standard single quotes without escaping.
-2. Focus on the core infrastructure/Docker error, ignore shell escaping syntax in the logs.
+1. Focus ON THE DOCKER ERROR (e.g., 'pull access denied', 'repository does not exist').
+2. Keep the `search_text` AS SHORT AS POSSIBLE. Only target the exact word or phrase that is broken (like a misspelled image name). Do not include the whole line of code.
 
-Format exactly like this:
+EXAMPLE PERFECT RESPONSE:
 {{
     "file_to_edit": "Jenkinsfile",
-    "search_text": "exact broken text to find",
-    "replace_text": "new corrected text",
-    "explanation": "short reason"
+    "search_text": "typo-image",
+    "replace_text": "healer-agent",
+    "explanation": "The build failed because 'typo-image' does not exist. Replacing it with the correctly built 'healer-agent'."
 }}
 
 Error Log:
@@ -42,6 +42,7 @@ Error Log:
     payload = {"model": "codegemma:7b", "prompt": prompt, "stream": False}
     response = requests.post(url, json=payload)
     return response.json().get("response")
+
 
 def apply_fix(fix_data):
     file_path = fix_data.get("file_to_edit")
