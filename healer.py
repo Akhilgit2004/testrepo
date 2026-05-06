@@ -50,6 +50,7 @@ CRITICAL RULES:
 3. `replace_text` must contain the FULL, corrected line of code.
 4. NO ESCAPED SINGLE QUOTES. Do not use \\' inside your JSON strings. Use standard single quotes.
 5. If you cannot confidently fix the error, or the error is too complex, output EXACTLY: {{"error": "Manual intervention required"}}
+6. You MUST include an "explanation" key briefly describing the fix.
 
 EXAMPLE 1 (Docker Infrastructure):
 {{

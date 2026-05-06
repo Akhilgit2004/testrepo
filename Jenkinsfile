@@ -13,7 +13,7 @@ pipeline {
             steps {
                 echo "Running application tests..."
                 // This will crash because app.py has a missing parenthesis
-                sh "python3 app.py"
+                sh "python3 test.py"
             }
         }
     }
