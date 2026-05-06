@@ -127,7 +127,7 @@ def create_git_branch(explanation):
             print("❌ Push aborted: GITHUB_PAT environment variable not found in Jenkins.")
             return None
             
-        auth_url = f"https://{github_token}@[github.com/Akhilgit2004/testrepo.git](https://github.com/Akhilgit2004/testrepo.git)"
+        auth_url = f"https://{github_token}@github.com/Akhilgit2004/testrepo.git"
         subprocess.run(['git', 'push', '--set-upstream', auth_url, branch_name], check=True, capture_output=True)
         
         print(f"🌿 Successfully pushed new branch: {branch_name}")
@@ -156,7 +156,7 @@ if __name__ == "__main__":
         elif "response" in fix_data and isinstance(fix_data["response"], str):
              # If it gave us a string summary, we need to treat it as a failure
              print("❌ AI gave a text summary instead of a patch.")
-                   
+
         # SAFE DATA EXTRACTION (Preventing NoneType crashes)
         file_path = fix_data.get("file_to_edit")
         line_num = fix_data.get("line_number")
