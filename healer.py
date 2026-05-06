@@ -165,7 +165,7 @@ if __name__ == "__main__":
             # FORCE the AI to look at the log again specifically for app.cpp
             if "app.cpp" in log_content:
                  print("🔄 Redirecting AI attention to app.cpp...")
-                 fix_data["file_to_edit"] = "app.cpp"
+                 fix_data["file_to_edit"] = "test.cpp"
         line_num = fix_data.get("line_number")
         new_text = fix_data.get("replace_text")
         reason = fix_data.get("explanation", "No explanation provided.")
