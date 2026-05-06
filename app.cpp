@@ -1,9 +1,14 @@
 #include <iostream>
-#include <vector>
 
 int main() {
-    std::vector<int> nums = {1, 2, 3, 4, 5};
-    int total = std::accumulate(nums.begin(), nums.end(), 0);
-    std::cout << "The sum is: " << total << std::endl;
+    int multiplier = 5;
+    
+    for (int i = 0; i < 3; i++) {
+        int result = i * multiplier;
+    }
+    
+    // Bug: 'result' was declared inside the loop and doesn't exist here
+    std::cout << "Final result: " << result << std::endl;
+    
     return 0;
 }
