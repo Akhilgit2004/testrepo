@@ -135,22 +135,26 @@ DIAGNOSIS:"""
     return response.json().get("response")
 
 def get_json_patch(file_content, diagnosis):
-    """STAGE 2: Focuses 100% on generating a strict JSON patch based on the file's actual code."""
+    """STAGE 2: Multi-Patch Generator."""
     url = "http://localhost:11434/api/generate"
     prompt = f"""You are an automated code patcher. 
 
-TARGET FILE CONTENT:{file_content}
+TARGET FILE CONTENT:
+{file_content}
+
+
 ERROR DIAGNOSIS:
 {diagnosis}
 
-Task: Output a JSON patch to fix the file based on the diagnosis.
-SCHEMA: {{"file_to_edit": "string", "line_number": integer, "replace_text": "string", "explanation": "string"}}
+Task: Output a JSON object containing an array of patches to fix the file.
+SCHEMA: {{"explanation": "string", "patches": [{{"line_number": integer, "replace_text": "string"}}]}}
 
 CRITICAL RULES:
 1. Output ONLY JSON. No markdown, no text.
-2. 'line_number' is the exact line to swap (1-indexed). Look at the Target File Content to count the lines.
-3. 'replace_text' must be ONLY the line being changed, with no surrounding code.
-4. If the fix requires an import (Python) or header (C++), ALWAYS target line_number: 1.
+2. MULTI-EDIT: You can provide multiple patches if a fix requires changing multiple lines.
+3. VARIABLE SHADOWING: If fixing an undeclared variable by declaring it at a higher scope, you MUST include a second patch to remove the type keyword (e.g., 'int') from the inner scope assignment.
+4. 'line_number' is the exact line to swap (1-indexed). Look at the Target File Content to count the lines.
+5. 'replace_text' must be ONLY the new line of code.
 
 JSON PATCH:"""
 
@@ -201,18 +205,28 @@ if __name__ == "__main__":
     
     try:
         fix_data = json.loads(raw_patch)
-        
-        # Ensure we always target the correct file, even if the AI typo'd it in the JSON
-        fix_data["file_to_edit"] = target_file 
+        patches = fix_data.get("patches", [])
         
         print(f"🤖 AI RECOMMENDS: {fix_data.get('explanation', 'Auto-fix generated.')}")
         
+        # SRE TRICK: Sort patches by line_number descending. 
+        # This prevents line shifting when modifying multiple lines!
+        patches.sort(key=lambda x: x["line_number"], reverse=True)
+        
         # ---------------------------------------------------------
-        # STAGE 3: EXECUTION
+        # STAGE 3: EXECUTION (Multi-Patch)
         # ---------------------------------------------------------
-        if apply_fix_streaming(fix_data):
-            print("✅ Code patched locally.")
+        success_count = 0
+        for patch in patches:
+            patch["file_to_edit"] = target_file 
+            if apply_fix_streaming(patch):
+                success_count += 1
+                
+        if success_count == len(patches) and success_count > 0:
+            print(f"✅ All {success_count} patches applied locally.")
             create_git_branch(fix_data.get("explanation", "Auto-fix"))
+        else:
+            print(f"⚠️ Applied {success_count}/{len(patches)} patches. Check logs for errors.")
             
     except json.JSONDecodeError as e:
         print(f"❌ Critical JSON Parsing Failed: {e}")
