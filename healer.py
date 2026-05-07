@@ -100,8 +100,8 @@ def verify_fix(target_file):
     """Attempts to compile the code locally. Returns (Success_Boolean, Error_String)."""
     # Adjust this command if you are testing Python (e.g., 'python3 -m py_compile')
     compile_cmd = ['g++', target_file, '-o', 'test_build']
-    
-    print(f"🧪 VERIFICATION: Running '{" ".join(compile_cmd)}'...")
+    cmd_str = " ".join(compile_cmd)
+    print(f"🧪 VERIFICATION: Running '{cmd_str}'...")
     result = subprocess.run(compile_cmd, capture_output=True, text=True)
     
     if result.returncode == 0:
