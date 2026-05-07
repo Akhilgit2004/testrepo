@@ -126,7 +126,7 @@ LOG:
 DIAGNOSIS:"""
 
     payload = {
-        "model": "qwen2.5-coder:14b", 
+        "model": "qwen3:14b", 
         "prompt": prompt, 
         "stream": False, 
         "options": {"temperature": 0.4}
@@ -135,34 +135,44 @@ DIAGNOSIS:"""
     return response.json().get("response")
 
 def get_json_patch(file_content, diagnosis):
-    """STAGE 2: Multi-Patch Generator."""
+    """STAGE 2: Whole-File Repair Agent (Qwen 3.6)."""
     url = "http://localhost:11434/api/generate"
-    prompt = f"""You are an automated code patcher. 
+    
+    prompt = f"""You are a Senior Software Engineer. 
+A CI/CD pipeline failed with the following error.
 
-TARGET FILE CONTENT:
-{file_content}
-
-
-ERROR DIAGNOSIS:
+ERROR LOG:
+---
 {diagnosis}
+---
 
-Task: Output a JSON object containing an array of patches to fix the file.
-SCHEMA: {{"explanation": "string", "patches": [{{"line_number": integer, "replace_text": "string"}}]}}
+CURRENT SOURCE CODE:
+---
+{file_content}
+---
 
-CRITICAL RULES:
-1. Output ONLY valid JSON.
-2. CONTEXT CHUNKING: To avoid modifying the wrong duplicate line, your 'search_text' MUST include the line you want to change PLUS the line immediately above it and below it. 
-3. 'search_text' must be an exact, character-for-character copy from the TARGET FILE CONTENT (including exact indentation and newlines).
-4. 'replace_text' must contain the same surrounding context lines, with only the target line modified.
-5. VARIABLE SHADOWING: If fixing an undeclared variable, provide one patch to declare it at the top, and a SECOND patch to remove the type keyword from the inner scope.
-JSON PATCH:"""
+TASK:
+1. Analyze the error and the source code.
+2. Create a mental plan to fix the root cause.
+3. Output the ENTIRE corrected source code.
+
+RULES:
+- Provide a brief 'explanation' of the fix.
+- Provide the 'fixed_code' as a complete, runnable file.
+- DO NOT truncate the code. DO NOT say "// rest of code here".
+- Return your answer in STRICT JSON format.
+
+JSON RESPONSE:"""
 
     payload = {
-        "model": "qwen2.5-coder:14b",
+        "model": "qwen3:14b",
         "prompt": prompt,
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.0}
+        "options": {
+            "temperature": 0.2, # Low temperature for code stability
+            "num_ctx": 32768    # Qwen 3.6 handles large windows easily
+        }
     }
     response = requests.post(url, json=payload)
     return response.json().get("response")
@@ -173,62 +183,53 @@ JSON PATCH:"""
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚨 HEALER AGENT: INITIATING TWO-STAGE RECOVERY...")
+    print("🚨 HEALER AGENT: INITIATING WHOLE-FILE RECOVERY...")
     
+    # ---------------------------------------------------------
+    # STAGE 1: LOG INGESTION
+    # ---------------------------------------------------------
+    print("🧠 STAGE 1: Reading Jenkins logs...")
     log_content = get_latest_jenkins_log()
     
-    # ---------------------------------------------------------
-    # STAGE 1: DIAGNOSIS
-    # ---------------------------------------------------------
-    print("\n🧠 STAGE 1: Analyzing Jenkins Log...")
-    diagnosis = get_diagnosis(log_content)
-    print(f"🔍 ANALYSIS: {diagnosis[:200]}...\n")
-    
-    # Extract the file name using regex (e.g., app.cpp, app.py)
-    file_match = re.search(r'(\w+\.(cpp|py|java|js))', diagnosis)
+    # Identify target file using regex (e.g., app.cpp, app.py)
+    file_match = re.search(r'(\w+\.(cpp|py|java|js))', log_content)
     target_file = file_match.group(1) if file_match else "app.cpp"
 
     if not os.path.exists(target_file):
-        print(f"⚠️ Could not find target file: {target_file}. Is the regex catching the wrong name?")
+        print(f"⚠️ Could not find target file: {target_file}. Aborting.")
         exit(1)
 
-    # Read the actual broken code
     with open(target_file, 'r') as f:
         current_code = f.read()
+
+    # ---------------------------------------------------------
+    # STAGE 2: WHOLE-FILE GENERATION (14B Engine)
+    # ---------------------------------------------------------
+    print(f"🛠️ STAGE 2: Generating complete, corrected file for {target_file}...")
+    raw_response = get_fixed_code(current_code, log_content)
     
     # ---------------------------------------------------------
-    # STAGE 2: FIX GENERATION
+    # STAGE 3: EXECUTION (Direct Overwrite)
     # ---------------------------------------------------------
-    print(f"🛠️ STAGE 2: Generating JSON patch for {target_file}...")
-    raw_patch = get_json_patch(current_code, diagnosis)
-    
     try:
-        fix_data = json.loads(raw_patch)
-        patches = fix_data.get("patches", [])
-        
-        print(f"🤖 AI RECOMMENDS: {fix_data.get('explanation', 'Auto-fix generated.')}")
-        
-        # SRE TRICK: Sort patches by line_number descending. 
-        # This prevents line shifting when modifying multiple lines!
-        patches.sort(key=lambda x: x["line_number"], reverse=True)
-        
-        # ---------------------------------------------------------
-        # STAGE 3: EXECUTION (Multi-Patch)
-        # ---------------------------------------------------------
-        success_count = 0
-        for patch in patches:
-            patch["file_to_edit"] = target_file 
-            if apply_fix_streaming(patch):
-                success_count += 1
-                
-        if success_count == len(patches) and success_count > 0:
-            print(f"✅ All {success_count} patches applied locally.")
-            create_git_branch(fix_data.get("explanation", "Auto-fix"))
-        else:
-            print(f"⚠️ Applied {success_count}/{len(patches)} patches. Check logs for errors.")
+        data = json.loads(raw_response)
+        fixed_code = data.get("fixed_code")
+        explanation = data.get("explanation", "Code repaired.")
+
+        # Safety check: Ensure the AI didn't just return an empty string
+        if fixed_code and len(fixed_code) > 10:
+            # Overwrite the file entirely with the new 14B output
+            with open(target_file, 'w') as f:
+                f.write(fixed_code)
             
+            print(f"✅ HEALER: {explanation}")
+            print(f"✅ Successfully rewrote {target_file}.")
+            create_git_branch(explanation)
+        else:
+            print("⚠️ Agent returned empty or truncated code. Safety abort triggered.")
+
     except json.JSONDecodeError as e:
         print(f"❌ Critical JSON Parsing Failed: {e}")
-        print(f"Raw Output was:\n{raw_patch}")
+        print(f"Raw Output was:\n{raw_response}")
         
     print("="*50 + "\n")
