@@ -87,31 +87,54 @@ def verify_fix(target_file):
     else:
         return False, result.stderr
 
-def create_git_branch(explanation):
-    """Commits and pushes the fix to a new branch."""
+def create_pull_request(explanation, target_file, attempt):
+    """Commits code, pushes branch, and opens a GitHub Pull Request."""
     build_id = os.environ.get('BUILD_ID', 'manual')
-    branch_name = f"healer-fix-build-{build_id}"
-    token = os.environ.get('GITHUB_PAT', '').strip()
+    branch_name = f"healer-fix-{build_id}"
     
-    if not token:
-        print("❌ Push aborted: GITHUB_PAT environment variable not found.")
-        return None
-        
-    auth_url = f"https://{token}@github.com/Akhilgit2004/testrepo.git"
-    
+    # AI-Generated PR Title and Body
+    pr_title = f"🤖 AI Fix: Resolved build failure in {target_file}"
+    pr_body = f"""## 🚨 Automated Fix Report
+The Healer Agent detected a build failure in `{target_file}`.
+
+### 🛠️ What was fixed:
+{explanation}
+
+### 📊 Stats:
+- **Build ID:** {build_id}
+- **Attempts taken:** {attempt}
+- **Verified locally:** ✅ Yes
+
+*This PR was generated automatically by the Healer SRE Agent.*
+"""
+
     try:
+        # 1. Create and switch to a new branch
         subprocess.run(['git', 'checkout', '-b', branch_name], check=True, capture_output=True)
+        
+        # 2. Add and commit changes
         subprocess.run(['git', 'add', '-u'], check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', f"Auto-fix: {explanation}"], check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', f"fix: AI generated repair for {target_file}"], check=True, capture_output=True)
         
-        print("☁️ Authenticating and pushing fix to GitHub...")
-        subprocess.run(['git', 'push', '-4', '--set-upstream', auth_url, branch_name], check=True, capture_output=True)
+        # 3. Push to GitHub (Using the authenticated git environment)
+        print(f"☁️ Pushing branch {branch_name} to origin...")
+        subprocess.run(['git', 'push', 'origin', branch_name], check=True, capture_output=True)
         
-        print(f"🌿 Successfully pushed new branch: {branch_name}")
-        return branch_name
+        # 4. Open the Pull Request using GitHub CLI
+        print(f"🚀 Opening Pull Request on GitHub...")
+        subprocess.run([
+            'gh', 'pr', 'create', 
+            '--title', pr_title, 
+            '--body', pr_body, 
+            '--head', branch_name, 
+            '--base', 'main'
+        ], check=True, capture_output=True)
+        
+        print(f"✅ Pull Request successfully created for {branch_name}!")
+        return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Git push failed: {e.stderr.decode()}")
-        return None
+        print(f"❌ GitHub Action failed: {e.stderr.decode('utf-8') if e.stderr else e}")
+        return False
 
 # ==========================================
 # STAGE 2: MULTI-FILE REPAIR ENGINE
@@ -220,22 +243,21 @@ if __name__ == "__main__":
     
     if match:
         fixed_code = match.group(1).strip()
-        
-        # Safety check: Ensure the AI wrote a substantial file
-        if len(fixed_code) > 100: 
+        if len(fixed_code) > 20: # Relaxed check slightly
             with open(target_file, 'w') as f:
                 f.write(fixed_code)
-            
-            print(f"✅ HEALER: Extracted {len(fixed_code.splitlines())} lines of code.")
-            print(f"✅ Successfully rewrote {target_file}.")
-            create_git_branch("Agent applied multi-bug whole-file fix")
+                
+            success, errors = verify_fix(target_file)
+            if success:
+                print("✅ Verified!")
+                create_pull_request("Automated fix for build failure.", target_file, attempt)
+                # break
+            else:
+                print("❌ Verification failed.")
+                log_content = errors
         else:
-            print("⚠️ Extracted code was too short (might be truncated). Safety abort.")
-            print(f"Snippet extracted: \n{fixed_code[:200]}")
-            
+            print("⚠️ Extracted code too short.")
     else:
-        print("❌ Critical Failure: Could not find a Markdown code block in the AI's response.")
-        print("Raw Response snippet (First 1000 chars):")
-        print(str(raw_response)[:1000])
-        
-    print("="*50 + "\n")
+        print("❌ No code block found in AI response.")
+
+    print("="*50)
