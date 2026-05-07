@@ -1,10 +1,7 @@
 import os
 import requests
-import json
 import subprocess
 import re
-import tempfile
-import shutil
 
 # ==========================================
 # UTILITY FUNCTIONS
@@ -12,8 +9,8 @@ import shutil
 
 def get_latest_jenkins_log():
     """Fetches the latest Jenkins build log (last 100 lines)."""
-    job_name = os.environ.get('JOB_NAME')
-    build_id = os.environ.get('BUILD_ID')
+    job_name = os.environ.get('JOB_NAME', 'unknown_job')
+    build_id = os.environ.get('BUILD_ID', 'unknown_build')
     log_path = f"/var/lib/jenkins/jobs/{job_name}/builds/{build_id}/log"
     
     try:
@@ -23,65 +20,8 @@ def get_latest_jenkins_log():
     except Exception as e:
         return f"Could not read log: {e}"
 
-def apply_fix_streaming(fix_data):
-    """Surgical, memory-safe file modification with Smart Indentation and Universal Prepend."""
-    file_path = fix_data.get("file_to_edit")
-    line_number = fix_data.get("line_number")
-    replace_text = fix_data.get("replace_text")
-    
-    if not os.path.exists(file_path):
-        print(f"❌ Safety Abort: File '{file_path}' does not exist.")
-        return False
-        
-    temp_fd, temp_path = tempfile.mkstemp()
-    line_replaced = False
-    
-    # Define keywords that should always be prepended at the top (Line 1)
-    top_level_keywords = ["#include", "import ", "from ", "package "]
-    is_top_level_fix = any(k in replace_text for k in top_level_keywords)
-    
-    try:
-        with os.fdopen(temp_fd, 'w') as temp_file, open(file_path, 'r') as original_file:
-            for current_index, current_line in enumerate(original_file):
-                if current_index == (line_number - 1):
-                    # 1. UNIVERSAL PREPEND: For libraries/headers at Line 1, don't delete the original line!
-                    if line_number == 1 and is_top_level_fix:
-                        print(f"🔍 Prepending Library/Header:\n[+] {replace_text.strip()}")
-                        temp_file.write(replace_text)
-                        if not replace_text.endswith('\n'):
-                            temp_file.write('\n')
-                        temp_file.write(current_line) # Keep the original Line 1
-                    else:
-                        # 2. SMART INDENTATION MATCHING for standard swaps
-                        # Extract the exact whitespace from the start of the original line
-                        leading_spaces = current_line[:len(current_line) - len(current_line.lstrip())]
-                        
-                        # Strip any messy whitespace the AI tried to add
-                        clean_text = replace_text.lstrip()
-                        
-                        print(f"🔍 Swapping:\n[-] {current_line.rstrip()}\n[+] {leading_spaces}{clean_text}")
-                        
-                        # Write it with perfect original indentation
-                        temp_file.write(leading_spaces + clean_text + '\n')
-                    line_replaced = True
-                else:
-                    temp_file.write(current_line)
-                    
-        if line_replaced:
-            shutil.move(temp_path, file_path)
-            return True
-        else:
-            print(f"❌ Safety Abort: Line {line_number} is out of bounds.")
-            os.remove(temp_path)
-            return False
-            
-    except Exception as e:
-        os.remove(temp_path)
-        print(f"❌ File operation failed: {e}")
-        return False
-
 def create_git_branch(explanation):
-    """Commits and pushes the fix to a new branch using IPv4 to avoid GitHub API errors."""
+    """Commits and pushes the fix to a new branch using IPv4."""
     build_id = os.environ.get('BUILD_ID', 'manual')
     branch_name = f"healer-fix-build-{build_id}"
     token = os.environ.get('GITHUB_PAT', '').strip()
@@ -98,7 +38,6 @@ def create_git_branch(explanation):
         subprocess.run(['git', 'commit', '-m', f"Auto-fix: {explanation}"], check=True, capture_output=True)
         
         print("☁️ Authenticating and pushing fix to GitHub...")
-        # '-4' forces IPv4, preventing the 'Bad IPv6' error you saw earlier
         subprocess.run(['git', 'push', '-4', '--set-upstream', auth_url, branch_name], check=True, capture_output=True)
         
         print(f"🌿 Successfully pushed new branch: {branch_name}")
@@ -108,34 +47,11 @@ def create_git_branch(explanation):
         return None
 
 # ==========================================
-# MULTI-AGENT ARCHITECTURE
+# STAGE 2: WHOLE-FILE REPAIR AGENT
 # ==========================================
 
-def get_diagnosis(error_log):
-    """STAGE 1: Focuses 100% on reasoning and identifying the root cause."""
-    url = "http://localhost:11434/api/generate"
-    prompt = f"""You are a Senior SRE reviewing a CI/CD pipeline failure.
-Analyze the following error log. 
-1. Identify the exact file that is causing the error.
-2. Explain the root cause of the error.
-3. State the exact code needed to fix it (e.g., missing header, syntax error).
-
-LOG:
-{error_log}
-
-DIAGNOSIS:"""
-
-    payload = {
-        "model": "qwen3:14b", 
-        "prompt": prompt, 
-        "stream": False, 
-        "options": {"temperature": 0.4}
-    }
-    response = requests.post(url, json=payload)
-    return response.json().get("response")
-
-def get_json_patch(file_content, diagnosis):
-    """STAGE 2: Whole-File Repair Agent (Qwen 3.6)."""
+def get_fixed_code(file_content, error_log):
+    """Uses the 14B model to think and rewrite the entire file in a Markdown block."""
     url = "http://localhost:11434/api/generate"
     
     prompt = f"""You are a Senior Software Engineer. 
@@ -143,7 +59,7 @@ A CI/CD pipeline failed with the following error.
 
 ERROR LOG:
 ---
-{diagnosis}
+{error_log}
 ---
 
 CURRENT SOURCE CODE:
@@ -152,31 +68,35 @@ CURRENT SOURCE CODE:
 ---
 
 TASK:
-1. Analyze the error and the source code.
-2. Create a mental plan to fix the root cause.
-3. Output the ENTIRE corrected source code.
+1. Analyze the error and identify ALL bugs in the code.
+2. Rewrite the entire file to fix the root causes.
+3. Output the ENTIRE corrected source code inside a single Markdown code block.
 
 RULES:
-- Provide a brief 'explanation' of the fix.
-- Provide the 'fixed_code' as a complete, runnable file.
-- DO NOT truncate the code. DO NOT say "// rest of code here".
-- Return your answer in STRICT JSON format.
-- Ensure thinking mode is enabled to reason through the scope logic before writing the code.
+- Provide a brief explanation before the code block.
+- DO NOT truncate the code. You MUST output the entire file.
+- The code must be inside triple backticks (```cpp ... ```).
 
-JSON RESPONSE:"""
+RESPONSE:"""
 
     payload = {
-        "model": "qwen3:14b",
+        # Change this to "qwen3:14b" if you pulled the Qwen 3 version!
+        "model": "qwen2.5-coder:14b", 
         "prompt": prompt,
         "stream": False,
-        "format": "json",
         "options": {
-            "temperature": 0.2, # Low temperature for code stability
-            "num_ctx": 32768    # Qwen 3.6 handles large windows easily
+            "temperature": 0.2,
+            "num_ctx": 32768,
+            "num_predict": 8192 # Crucial: Allows the model to write 150+ lines
         }
     }
-    response = requests.post(url, json=payload)
-    return response.json().get("response")
+    
+    try:
+        response = requests.post(url, json=payload)
+        return response.json().get("response", "")
+    except Exception as e:
+        print(f"❌ API Request Failed: {e}")
+        return ""
 
 # ==========================================
 # MAIN ORCHESTRATOR
@@ -192,8 +112,8 @@ if __name__ == "__main__":
     print("🧠 STAGE 1: Reading Jenkins logs...")
     log_content = get_latest_jenkins_log()
     
-    # Identify target file using regex (e.g., app.cpp, app.py)
-    file_match = re.search(r'(\w+\.(cpp|py|java|js))', log_content)
+    # Identify target file using regex
+    file_match = re.search(r'(\w+\.(cpp|py|java|js))', str(log_content))
     target_file = file_match.group(1) if file_match else "app.cpp"
 
     if not os.path.exists(target_file):
@@ -207,30 +127,38 @@ if __name__ == "__main__":
     # STAGE 2: WHOLE-FILE GENERATION (14B Engine)
     # ---------------------------------------------------------
     print(f"🛠️ STAGE 2: Generating complete, corrected file for {target_file}...")
-    raw_response = get_json_patch(current_code, log_content)
+    raw_response = get_fixed_code(current_code, log_content)
+    
+    if not raw_response:
+        print("❌ Critical Failure: Received empty response from Ollama API.")
+        exit(1)
     
     # ---------------------------------------------------------
-    # STAGE 3: EXECUTION (Direct Overwrite)
+    # STAGE 3: EXECUTION (Markdown Extraction)
     # ---------------------------------------------------------
-    try:
-        data = json.loads(raw_response)
-        fixed_code = data.get("fixed_code")
-        explanation = data.get("explanation", "Code repaired.")
-
-        # Safety check: Ensure the AI didn't just return an empty string
-        if fixed_code and len(fixed_code) > 10:
-            # Overwrite the file entirely with the new 14B output
+    print("⚙️ Parsing Markdown output...")
+    
+    # Extract everything between ``` language and ```
+    match = re.search(r'```[a-zA-Z]*\n(.*?)```', str(raw_response), re.DOTALL)
+    
+    if match:
+        fixed_code = match.group(1).strip()
+        
+        # Safety check: Ensure the AI wrote a substantial file
+        if len(fixed_code) > 100: 
             with open(target_file, 'w') as f:
                 f.write(fixed_code)
             
-            print(f"✅ HEALER: {explanation}")
+            print(f"✅ HEALER: Extracted {len(fixed_code.splitlines())} lines of code.")
             print(f"✅ Successfully rewrote {target_file}.")
-            create_git_branch(explanation)
+            create_git_branch("Agent applied multi-bug whole-file fix")
         else:
-            print("⚠️ Agent returned empty or truncated code. Safety abort triggered.")
-
-    except json.JSONDecodeError as e:
-        print(f"❌ Critical JSON Parsing Failed: {e}")
-        print(f"Raw Output was:\n{raw_response}")
+            print("⚠️ Extracted code was too short (might be truncated). Safety abort.")
+            print(f"Snippet extracted: \n{fixed_code[:200]}")
+            
+    else:
+        print("❌ Critical Failure: Could not find a Markdown code block in the AI's response.")
+        print("Raw Response snippet (First 1000 chars):")
+        print(str(raw_response)[:1000])
         
     print("="*50 + "\n")
