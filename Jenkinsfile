@@ -15,7 +15,7 @@ pipeline {
 
         stage('Test App') {
             steps {
-                sh "python3 test.py" // This will throw a NameError
+                sh "g++ app.cpp -o app" 
             }
         }
     }
