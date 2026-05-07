@@ -50,12 +50,16 @@ def create_git_branch(explanation):
 # STAGE 2: WHOLE-FILE REPAIR AGENT
 # ==========================================
 
-def get_fixed_code(file_content, error_log):
+def get_fixed_code(file_content, error_log,attempt=1):
     """Uses the 14B model to think and rewrite the entire file in a Markdown block."""
     url = "http://localhost:11434/api/generate"
     
-    prompt = f"""You are a Senior Software Engineer. 
-A CI/CD pipeline failed with the following error.
+    # NEW: If it's a retry, aggressively tell the AI it failed!
+    retry_context = ""
+    if attempt > 1:
+        retry_context = "\nCRITICAL: Your previous fix FAILED to compile. Please read the NEW error log below and try again."
+
+    prompt = f"""You are a Senior Software Engineer. {retry_context}
 
 ERROR LOG:
 ---
@@ -73,30 +77,38 @@ TASK:
 3. Output the ENTIRE corrected source code inside a single Markdown code block.
 
 RULES:
-- Provide a brief explanation before the code block.
 - DO NOT truncate the code. You MUST output the entire file.
 - The code must be inside triple backticks (```cpp ... ```).
 
 RESPONSE:"""
 
     payload = {
-        # Change this to "qwen3:14b" if you pulled the Qwen 3 version!
-        "model": "qwen2.5-coder:14b", 
+        "model": "qwen3:14b", 
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": 0.2,
-            "num_ctx": 32768,
-            "num_predict": 8192 # Crucial: Allows the model to write 150+ lines
+            "temperature": 0.1,  # Lowered to 0.1 for strict syntax logic
+            "num_predict": 4096, # Give it enough room for the file, but prevents endless loops
+            "num_ctx": 16384
         }
     }
     
-    try:
-        response = requests.post(url, json=payload)
-        return response.json().get("response", "")
-    except Exception as e:
-        print(f"❌ API Request Failed: {e}")
-        return ""
+    response = requests.post(url, json=payload)
+    return response.json().get("response", "")
+    
+def verify_fix(target_file):
+    """Attempts to compile the code locally. Returns (Success_Boolean, Error_String)."""
+    # Adjust this command if you are testing Python (e.g., 'python3 -m py_compile')
+    compile_cmd = ['g++', target_file, '-o', 'test_build']
+    
+    print(f"🧪 VERIFICATION: Running '{" ".join(compile_cmd)}'...")
+    result = subprocess.run(compile_cmd, capture_output=True, text=True)
+    
+    if result.returncode == 0:
+        return True, ""
+    else:
+        # Return the new compiler error so the AI can read it
+        return False, result.stderr
 
 # ==========================================
 # MAIN ORCHESTRATOR
@@ -104,15 +116,13 @@ RESPONSE:"""
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚨 HEALER AGENT: INITIATING WHOLE-FILE RECOVERY...")
+    print("🚨 HEALER AGENT: INITIATING SELF-HEALING LOOP...")
     
-    # ---------------------------------------------------------
-    # STAGE 1: LOG INGESTION
-    # ---------------------------------------------------------
+    # 1. Get the initial failing log from Jenkins
     print("🧠 STAGE 1: Reading Jenkins logs...")
     log_content = get_latest_jenkins_log()
     
-    # Identify target file using regex
+    # 2. Identify target file using regex (e.g., app.cpp, app.py)
     file_match = re.search(r'(\w+\.(cpp|py|java|js))', str(log_content))
     target_file = file_match.group(1) if file_match else "app.cpp"
 
@@ -120,23 +130,22 @@ if __name__ == "__main__":
         print(f"⚠️ Could not find target file: {target_file}. Aborting.")
         exit(1)
 
-    with open(target_file, 'r') as f:
-        current_code = f.read()
+    MAX_RETRIES = 2
+    
+    # 3. The Self-Healing Loop
+    for attempt in range(1, MAX_RETRIES + 1):
+        print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
+        
+        # Read the current state of the code
+        with open(target_file, 'r') as f:
+            current_code = f.read()
 
-    # ---------------------------------------------------------
-    # STAGE 2: WHOLE-FILE GENERATION (14B Engine)
-    # ---------------------------------------------------------
-    print(f"🛠️ STAGE 2: Generating complete, corrected file for {target_file}...")
-    raw_response = get_fixed_code(current_code, log_content)
-    
-    if not raw_response:
-        print("❌ Critical Failure: Received empty response from Ollama API.")
-        exit(1)
-    
-    # ---------------------------------------------------------
-    # STAGE 3: EXECUTION (Markdown Extraction)
-    # ---------------------------------------------------------
-    print("⚙️ Parsing Markdown output...")
+        # Ask AI for the fix
+        print(f"🛠️ Generating fix (this may take a few minutes)...")
+        raw_response = get_fixed_code(current_code, log_content, attempt)
+        
+        # Extract the code block safely using regex
+        print("⚙️ Parsing Markdown output...")
     
     # Extract everything between ``` language and ```
     match = re.search(r'```[a-zA-Z]*\n(.*?)```', str(raw_response), re.DOTALL)
