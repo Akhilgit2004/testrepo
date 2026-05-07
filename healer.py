@@ -126,7 +126,7 @@ LOG:
 DIAGNOSIS:"""
 
     payload = {
-        "model": "qwen2.5-coder:7b", 
+        "model": "qwen2.5-coder:14b", 
         "prompt": prompt, 
         "stream": False, 
         "options": {"temperature": 0.4}
@@ -159,7 +159,7 @@ CRITICAL RULES:
 JSON PATCH:"""
 
     payload = {
-        "model": "qwen2.5-coder:7b",
+        "model": "qwen2.5-coder:14b",
         "prompt": prompt,
         "stream": False,
         "format": "json",
