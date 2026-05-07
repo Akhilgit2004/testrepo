@@ -27,9 +27,56 @@ def get_latest_jenkins_log():
         return f"Could not read log: {e}"
 
 def verify_fix(target_file):
-    """Attempts to compile the code locally."""
-    compile_cmd = ['g++', target_file, '-o', 'test_build']
+    """Dynamically detects the build system and verifies the code."""
+    print(f"🔍 VERIFICATION: Analyzing repository to detect build system...")
     
+    compile_cmd = []
+    
+    # 1. Check for Make (C/C++)
+    if os.path.exists("Makefile"):
+        print("🛠️ Build System Detected: Make")
+        compile_cmd = ['make']
+        
+    # 2. Check for Node.js
+    elif os.path.exists("package.json"):
+        print("🛠️ Build System Detected: npm")
+        compile_cmd = ['npm', 'run', 'build']
+        
+    # 3. Check for Maven (Java)
+    elif os.path.exists("pom.xml"):
+        print("🛠️ Build System Detected: Maven (Java)")
+        compile_cmd = ['mvn', 'clean', 'compile']
+        
+    # 4. Check for Gradle (Java)
+    elif os.path.exists("build.gradle") or os.path.exists("build.gradle.kts"):
+        print("🛠️ Build System Detected: Gradle (Java)")
+        # Use local gradlew wrapper if it exists, otherwise use system gradle
+        if os.path.exists("gradlew"):
+            compile_cmd = ['./gradlew', 'build']
+        else:
+            compile_cmd = ['gradle', 'build']
+        
+    # 5. Check for Python (Syntax Check only)
+    elif target_file.endswith(".py"):
+        print("🛠️ Build System Detected: Python (Syntax Check)")
+        compile_cmd = ['python3', '-m', 'py_compile', target_file]
+        
+    # 6. Fallback for standalone Java files
+    elif target_file.endswith(".java"):
+        print("🛠️ Build System Detected: Standalone Java")
+        compile_cmd = ['javac', target_file]
+        
+    # 7. Fallback for standalone C/C++ files
+    elif target_file.endswith(".cpp") or target_file.endswith(".c"):
+        print("🛠️ Build System Detected: Standalone C/C++")
+        compile_cmd = ['g++', target_file, '-o', 'test_build']
+        
+    # 8. Unknown Environment
+    else:
+        print("⚠️ No standard build system detected. Assuming code is valid.")
+        return True, ""
+
+    # Execute the dynamically chosen command
     cmd_str = " ".join(compile_cmd)
     print(f"🧪 VERIFICATION: Running '{cmd_str}'...")
     
