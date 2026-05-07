@@ -150,12 +150,11 @@ Task: Output a JSON object containing an array of patches to fix the file.
 SCHEMA: {{"explanation": "string", "patches": [{{"line_number": integer, "replace_text": "string"}}]}}
 
 CRITICAL RULES:
-1. Output ONLY JSON. No markdown, no text.
-2. MULTI-EDIT: You can provide multiple patches if a fix requires changing multiple lines.
-3. VARIABLE SHADOWING: If fixing an undeclared variable by declaring it at a higher scope, you MUST include a second patch to remove the type keyword (e.g., 'int') from the inner scope assignment.
-4. 'line_number' is the exact line to swap (1-indexed). Look at the Target File Content to count the lines.
-5. 'replace_text' must be ONLY the new line of code.
-
+1. Output ONLY valid JSON.
+2. CONTEXT CHUNKING: To avoid modifying the wrong duplicate line, your 'search_text' MUST include the line you want to change PLUS the line immediately above it and below it. 
+3. 'search_text' must be an exact, character-for-character copy from the TARGET FILE CONTENT (including exact indentation and newlines).
+4. 'replace_text' must contain the same surrounding context lines, with only the target line modified.
+5. VARIABLE SHADOWING: If fixing an undeclared variable, provide one patch to declare it at the top, and a SECOND patch to remove the type keyword from the inner scope.
 JSON PATCH:"""
 
     payload = {
