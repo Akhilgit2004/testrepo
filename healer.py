@@ -216,7 +216,7 @@ if __name__ == "__main__":
         raw_response = get_fixed_code(current_code, log_content, supporting_context, attempt)
     
     # Extract everything between ``` language and ```
-    match = re.search(r'```[a-zA-Z]*\n(.*?)```', str(raw_response), re.DOTALL)
+    match = re.search(r'([a-zA-Z0-9_-]+\.(?:cpp|py|java|js|c))\b', str(log_content))
     
     if match:
         fixed_code = match.group(1).strip()
