@@ -161,6 +161,7 @@ RULES:
 - Provide the 'fixed_code' as a complete, runnable file.
 - DO NOT truncate the code. DO NOT say "// rest of code here".
 - Return your answer in STRICT JSON format.
+- Ensure thinking mode is enabled to reason through the scope logic before writing the code.
 
 JSON RESPONSE:"""
 
