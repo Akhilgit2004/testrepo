@@ -1,7 +1,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
-// BUG 1: Missing #include <algorithm> here
+#include "config.h"
+
 
 // ==========================================
 // DATA STRUCTURES
@@ -13,7 +14,7 @@ struct ServerNode {
     std::string status;
     double cpu_usage;
     double ram_usage;
-} // BUG 2: Missing semicolon here! This will cause cascade errors.
+} 
 
 // ==========================================
 // MOCK DATABASE INTERFACE
@@ -85,7 +86,7 @@ public:
         
         for (size_t i = 0; i < fleet.size(); i++) {
             if (fleet[i].status == "ONLINE") {
-                // BUG 3: Typo! Variable is active_count, not active_cnt
+            
                 active_cnt++; 
             }
         }

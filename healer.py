@@ -4,11 +4,17 @@ import subprocess
 import re
 
 # ==========================================
+# CONFIGURATION
+# ==========================================
+MODEL = "qwen3:14b"
+MAX_RETRIES = 2
+
+# ==========================================
 # UTILITY FUNCTIONS
 # ==========================================
 
 def get_latest_jenkins_log():
-    """Fetches the latest Jenkins build log (last 100 lines)."""
+    """Fetches the latest Jenkins build log."""
     job_name = os.environ.get('JOB_NAME', 'unknown_job')
     build_id = os.environ.get('BUILD_ID', 'unknown_build')
     log_path = f"/var/lib/jenkins/jobs/{job_name}/builds/{build_id}/log"
@@ -20,8 +26,22 @@ def get_latest_jenkins_log():
     except Exception as e:
         return f"Could not read log: {e}"
 
+def verify_fix(target_file):
+    """Attempts to compile the code locally."""
+    compile_cmd = ['g++', target_file, '-o', 'test_build']
+    
+    cmd_str = " ".join(compile_cmd)
+    print(f"🧪 VERIFICATION: Running '{cmd_str}'...")
+    
+    result = subprocess.run(compile_cmd, capture_output=True, text=True)
+    
+    if result.returncode == 0:
+        return True, ""
+    else:
+        return False, result.stderr
+
 def create_git_branch(explanation):
-    """Commits and pushes the fix to a new branch using IPv4."""
+    """Commits and pushes the fix to a new branch."""
     build_id = os.environ.get('BUILD_ID', 'manual')
     branch_name = f"healer-fix-build-{build_id}"
     token = os.environ.get('GITHUB_PAT', '').strip()
@@ -47,14 +67,31 @@ def create_git_branch(explanation):
         return None
 
 # ==========================================
-# STAGE 2: WHOLE-FILE REPAIR AGENT
+# STAGE 2: MULTI-FILE REPAIR ENGINE
 # ==========================================
 
-def get_fixed_code(file_content, error_log,attempt=1):
-    """Uses the 14B model to think and rewrite the entire file in a Markdown block."""
+def gather_context(main_file_content):
+    """Scans for local includes and extracts their content for AI context."""
+    context_str = ""
+    
+    # Regex to find C++ local includes, e.g., #include "utils.h"
+    # (Ignores system includes like <iostream>)
+    local_includes = re.findall(r'#include\s+"([^"]+)"', main_file_content)
+    
+    for file_name in local_includes:
+        if os.path.exists(file_name):
+            print(f"📚 CONTEXT: Injecting {file_name} into AI memory...")
+            with open(file_name, 'r') as f:
+                context_str += f"\n--- SUPPORTING FILE: {file_name} ---\n{f.read()}\n"
+        else:
+            print(f"⚠️ CONTEXT: Could not find {file_name} locally.")
+            
+    return context_str
+
+def get_fixed_code(file_content, error_log, supporting_context, attempt=1):
+    """Uses the LLM to rewrite the entire file with multi-file context."""
     url = "http://localhost:11434/api/generate"
     
-    # NEW: If it's a retry, aggressively tell the AI it failed!
     retry_context = ""
     if attempt > 1:
         retry_context = "\nCRITICAL: Your previous fix FAILED to compile. Please read the NEW error log below and try again."
@@ -66,49 +103,41 @@ ERROR LOG:
 {error_log}
 ---
 
-CURRENT SOURCE CODE:
+CURRENT SOURCE CODE (Needs Fixing):
 ---
 {file_content}
 ---
+{supporting_context}
 
 TASK:
-1. Analyze the error and identify ALL bugs in the code.
-2. Rewrite the entire file to fix the root causes.
-3. Output the ENTIRE corrected source code inside a single Markdown code block.
+1. Identify and fix ALL bugs in the CURRENT SOURCE CODE.
+2. Ensure logic aligns with any provided SUPPORTING FILES.
+3. Output the ENTIRE corrected CURRENT SOURCE CODE inside a single Markdown block.
 
 RULES:
+- DO NOT rewrite the supporting files. Only fix the main source code.
 - DO NOT truncate the code. You MUST output the entire file.
-- The code must be inside triple backticks (```cpp ... ```).
+- Use triple backticks (```cpp ... ```).
 
 RESPONSE:"""
 
     payload = {
-        "model": "qwen3:14b", 
+        "model": MODEL, 
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": 0.1,  # Lowered to 0.1 for strict syntax logic
-            "num_predict": 4096, # Give it enough room for the file, but prevents endless loops
-            "num_ctx": 16384
+            "temperature": 0.1,
+            "num_predict": 4096,
+            "num_ctx": 24576 # Increased to ensure large contexts fit easily
         }
     }
     
-    response = requests.post(url, json=payload)
-    return response.json().get("response", "")
-    
-def verify_fix(target_file):
-    """Attempts to compile the code locally. Returns (Success_Boolean, Error_String)."""
-    # Adjust this command if you are testing Python (e.g., 'python3 -m py_compile')
-    compile_cmd = ['g++', target_file, '-o', 'test_build']
-    cmd_str = " ".join(compile_cmd)
-    print(f"🧪 VERIFICATION: Running '{cmd_str}'...")
-    result = subprocess.run(compile_cmd, capture_output=True, text=True)
-    
-    if result.returncode == 0:
-        return True, ""
-    else:
-        # Return the new compiler error so the AI can read it
-        return False, result.stderr
+    try:
+        response = requests.post(url, json=payload)
+        return response.json().get("response", "")
+    except Exception as e:
+        print(f"❌ API Request Failed: {e}")
+        return ""
 
 # ==========================================
 # MAIN ORCHESTRATOR
@@ -116,13 +145,10 @@ def verify_fix(target_file):
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚨 HEALER AGENT: INITIATING SELF-HEALING LOOP...")
+    print("🚨 HEALER AGENT: INITIATING MULTI-FILE RECOVERY...")
     
-    # 1. Get the initial failing log from Jenkins
-    print("🧠 STAGE 1: Reading Jenkins logs...")
     log_content = get_latest_jenkins_log()
     
-    # 2. Identify target file using regex (e.g., app.cpp, app.py)
     file_match = re.search(r'(\w+\.(cpp|py|java|js))', str(log_content))
     target_file = file_match.group(1) if file_match else "app.cpp"
 
@@ -130,22 +156,17 @@ if __name__ == "__main__":
         print(f"⚠️ Could not find target file: {target_file}. Aborting.")
         exit(1)
 
-    MAX_RETRIES = 2
-    
-    # 3. The Self-Healing Loop
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
         
-        # Read the current state of the code
         with open(target_file, 'r') as f:
             current_code = f.read()
 
-        # Ask AI for the fix
-        print(f"🛠️ Generating fix (this may take a few minutes)...")
-        raw_response = get_fixed_code(current_code, log_content, attempt)
-        
-        # Extract the code block safely using regex
-        print("⚙️ Parsing Markdown output...")
+        # Gather supporting files before talking to the LLM
+        supporting_context = gather_context(current_code)
+
+        print(f"🛠️ Generating fix via {MODEL}...")
+        raw_response = get_fixed_code(current_code, log_content, supporting_context, attempt)
     
     # Extract everything between ``` language and ```
     match = re.search(r'```[a-zA-Z]*\n(.*?)```', str(raw_response), re.DOTALL)
