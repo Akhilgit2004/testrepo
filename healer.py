@@ -206,7 +206,7 @@ if __name__ == "__main__":
     # STAGE 2: WHOLE-FILE GENERATION (14B Engine)
     # ---------------------------------------------------------
     print(f"🛠️ STAGE 2: Generating complete, corrected file for {target_file}...")
-    raw_response = get_fixed_code(current_code, log_content)
+    raw_response = get_json_patch(current_code, log_content)
     
     # ---------------------------------------------------------
     # STAGE 3: EXECUTION (Direct Overwrite)
