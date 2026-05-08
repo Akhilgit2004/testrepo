@@ -215,49 +215,69 @@ RESPONSE:"""
 
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚨 HEALER AGENT: INITIATING MULTI-FILE RECOVERY...")
+    print("🚨 HEALER AGENT: INITIATING RECOVERY...")
     
     log_content = get_latest_jenkins_log()
     
-    file_match = re.search(r'(\w+\.(cpp|py|java|js))', str(log_content))
-    target_file = file_match.group(1) if file_match else "app.cpp"
+    # Identify target file from logs
+    file_match = re.search(r'([a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))', str(log_content))
+    target_file = file_match.group(1) if file_match else None
 
-    if not os.path.exists(target_file):
-        print(f"⚠️ Could not find target file: {target_file}. Aborting.")
+    if not target_file or not os.path.exists(target_file):
+        print(f"⚠️ Target file '{target_file}' not found. Aborting.")
         exit(1)
 
+    # ADDED: Read the original code ONCE before the loop starts
+    # This ensures we always have the true baseline safe in memory.
+    with open(target_file, 'r') as f:
+        original_code = f.read()
+
+    success = False
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
         
-        with open(target_file, 'r') as f:
-            current_code = f.read()
-
-        # Gather supporting files before talking to the LLM
-        supporting_context = gather_context(current_code)
-
+        supporting_context = gather_context(original_code)
         print(f"🛠️ Generating fix via {MODEL}...")
-        raw_response = get_fixed_code(current_code, log_content, supporting_context, attempt)
+        
+        # Notice we pass original_code here so it doesn't spiral into hallucination
+        raw_response = get_fixed_code(original_code, log_content, supporting_context, attempt)
     
-    # Extract everything between ``` language and ```
-    match = re.search(r'([a-zA-Z0-9_-]+\.(?:cpp|py|java|js|c))\b', str(log_content))
-    
-    if match:
-        fixed_code = match.group(1).strip()
-        if len(fixed_code) > 20: # Relaxed check slightly
+        # FIXED: Using `{3}` instead of literal triple backticks to avoid markdown parsing breaks
+        code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
+        
+        if code_block_match:
+            fixed_code = code_block_match.group(1).strip()
+            
+            # Temporary backup (using the original code)
+            with open(f"{target_file}.bak", 'w') as bak:
+                bak.write(original_code)
+
+            # Apply fix
             with open(target_file, 'w') as f:
                 f.write(fixed_code)
                 
-            success, errors = verify_fix(target_file)
-            if success:
-                print("✅ Verified!")
+            # Verify
+            verified, errors = verify_fix(target_file)
+            if verified:
+                print("✅ VERIFIED: Fix compiled successfully!")
                 create_pull_request("Automated fix for build failure.", target_file, attempt)
-                # break
+                success = True
+                break # Exit loop on success
             else:
-                print("❌ Verification failed.")
-                log_content = errors
+                print(f"❌ VERIFICATION FAILED. Logged error for next attempt.")
+                log_content = errors # Feed the NEW error back to the LLM
+                
+                # ADDED: State Restoration. Revert file back to original before next loop
+                with open(target_file, 'w') as f:
+                    f.write(original_code)
         else:
-            print("⚠️ Extracted code too short.")
-    else:
-        print("❌ No code block found in AI response.")
+            print("❌ No code block found in AI response.")
 
+    if not success:
+        print("💀 ALL ATTEMPTS FAILED. Human intervention required.")
+        # ADDED: Final cleanup to ensure Jenkins workspace isn't left dirty
+        with open(target_file, 'w') as f:
+            f.write(original_code)
+            
     print("="*50)
+    
