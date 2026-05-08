@@ -196,7 +196,7 @@ if __name__ == "__main__":
         
         # STAGE 1: Reasoning
         print("🧠 STAGE 1: Diagnosing with local context...")
-        context = get_supporting_context(original_code, target_file)
+        context = get_supporting_context(target_file, log_content, original_code)
         if context:
             print(f"👀 Found supporting context in related files.")
             
