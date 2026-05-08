@@ -16,9 +16,9 @@ pipeline {
                     if [ -f "Makefile" ]; then
                         echo "🛠️ Make detected"
                         make
-                    elif [ -f "package.json" ]; then
-                        echo "🛠️ npm detected"
-                        npm install && npm run build
+                    // elif [ -f "package.json" ]; then
+                    //     echo "🛠️ npm detected"
+                    //     npm install && npm run build
                     elif [ -f "pom.xml" ]; then
                         echo "🛠️ Maven detected"
                         mvn clean compile
