@@ -62,7 +62,7 @@ pipeline {
                 python3 -m venv venv
                 
                 # 2. Install dependencies
-                ./venv/bin/pip install requests
+                ./venv/bin/pip install -r requirements.txt
                 
                 # 3. Trigger the Autonomous Multi-File Agent
                 ./venv/bin/python3 healer.py
