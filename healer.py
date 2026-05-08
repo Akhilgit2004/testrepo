@@ -72,20 +72,21 @@ def create_pull_request(explanation, target_file, attempt):
 # AI AGENT FUNCTIONS
 # ==========================================
 
-def get_diagnosis(file_content, error_log):
-    """STAGE 1: Force the AI to reason about the error before writing code."""
+def get_diagnosis(file_content, error_log, supporting_context=""):
+    """STAGE 1: Now with 100% more peripheral vision."""
     url = "http://localhost:11434/api/generate"
-    prompt = f"""You are a Senior SRE. Analyze this error log and the source code.
-    1. What exactly is causing the build to fail?
-    2. How should it be fixed?
-    Keep it brief and technical.
-
+    prompt = f"""You are a Senior SRE. Analyze the build failure.
+    
     ERROR LOG:
     {error_log}
 
-    SOURCE CODE:
+    BROKEN SOURCE CODE:
     {file_content}
+
+    SUPPORTING CONTEXT (Related files):
+    {supporting_context}
     
+    TASK: Identify if the error is in the broken file or caused by a mismatch with supporting files.
     DIAGNOSIS:"""
     
     try:
@@ -123,7 +124,41 @@ def get_fixed_code(target_file, file_content, diagnosis):
         return res.json().get("response", "")
     except Exception as e:
         return ""
+    
+def get_supporting_context(content, current_file_path):
+    """Scans the file for local imports and returns their content as context."""
+    directory = os.path.dirname(current_file_path) or "."
+    supporting_data = ""
+    
+    # Simple regex to find potential local file references
+    # Java: import com.pkg.ClassName; -> ClassName.java
+    # Python: from module import ... -> module.py
+    # C++: #include "header.h" -> header.h
+    patterns = [
+        r'import\s+[\w.]+\.(\w+);',       # Java imports
+        r'from\s+(\w+)\s+import',         # Python local imports
+        r'#include\s+"([^"]+)"'           # C++ local headers
+    ]
+    
+    found_files = []
+    for pattern in patterns:
+        matches = re.findall(pattern, content)
+        for match in matches:
+            # Try various extensions for the found name
+            for ext in ['.java', '.py', '.cpp', '.h']:
+                potential_file = os.path.join(directory, f"{match}{ext}" if not match.endswith(ext) else match)
+                if os.path.exists(potential_file) and potential_file != current_file_path:
+                    found_files.append(potential_file)
 
+    # Read the content of the found supporting files
+    for file in list(set(found_files))[:3]: # Limit to 3 files to save tokens
+        try:
+            with open(file, 'r') as f:
+                supporting_data += f"\n--- SUPPORTING CONTEXT: {file} ---\n{f.read()}\n"
+        except:
+            continue
+            
+    return supporting_data
 # ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
@@ -160,8 +195,12 @@ if __name__ == "__main__":
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
         
         # STAGE 1: Reasoning
-        print("🧠 STAGE 1: Diagnosing the root cause...")
-        diagnosis = get_diagnosis(original_code, log_content)
+        print("🧠 STAGE 1: Diagnosing with local context...")
+        context = get_supporting_context(original_code, target_file)
+        if context:
+            print(f"👀 Found supporting context in related files.")
+            
+        diagnosis = get_diagnosis(original_code, log_content, context)
         print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis}\n")
         
         # STAGE 2: Coding
