@@ -103,21 +103,35 @@ if __name__ == "__main__":
     
     log_content = get_latest_jenkins_log()
     
-    # IMPROVEMENT: Use word boundaries and broader char set for paths
+    # 1. Extract all potential file paths using word boundaries (\b)
     potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
     
+    # 2. Files to IGNORE (These are build manifests, not source code we want to 'fix')
+    ignore_list = ["package.json", "package-lock.json", "pom.xml", "Makefile", "build.gradle"]
+
     target_file = None
-    # CRITICAL: Search REVERSED (bottom-up) to find the file from the compiler error, 
-    # not the build-system detection log at the top.
+    
+    # 3. Search REVERSED (from bottom to top)
+    # This ensures we find the file in the 'javac' error at the end, 
+    # not the build detection script at the top.
     for file_path in reversed(potential_files):
-        if "://" in file_path: continue # Ignore URLs
-        if os.path.exists(file_path) and "package" not in file_path:
-            target_file = file_path
+        # Clean the path
+        clean_path = file_path.strip()
+        
+        # Skip if it's in our ignore list or is a URL
+        if any(ignored in clean_path for ignored in ignore_list):
+            continue
+        if "://" in clean_path:
+            continue
+            
+        # Verify the file actually exists on the disk
+        if os.path.exists(clean_path):
+            target_file = clean_path
             print(f"🎯 Target confirmed: {target_file}")
             break
 
     if not target_file:
-        print("💀 ERROR: No valid target file found in the logs. Aborting.")
+        print("💀 ERROR: Could not find a valid source file to fix in the logs. Aborting.")
         exit(1)
 
     with open(target_file, 'r') as f:
