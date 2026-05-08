@@ -1,17 +1,10 @@
 pipeline {
     agent any
 
-    environment {
-        // Securely maps your Jenkins Credential to an environment variable
-        // Make sure the ID 'GITHUB_BOT_TOKEN' exists in Jenkins Credentials
-        GITHUB_TOKEN = credentials('GITHUB_BOT_TOKEN')
-    }
-
     stages {
         stage('Environment Check') {
             steps {
                 echo "Running pre-flight checks..."
-                sh "echo 'Environment looks good.'"
             }
         }
 
@@ -59,30 +52,29 @@ pipeline {
         failure {
             echo "🔥 Build failed! Initiating AI SRE Agent..."
             
-            script {
-                // RE-ANCHOR CONTEXT: This node block gives the 'sh' steps access to the workspace
-                // This prevents the 'Required context class hudson.FilePath is missing' error.
-                node(env.NODE_NAME) {
-                    
-                    // 1. Capture the Git URL for the healer script
-                    env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
-                    
-                    sh '''
-                        # 2. Ensure virtual environment exists
-                        if [ ! -d "venv" ]; then
-                            python3 -m venv venv
-                        fi
+            // We wrap this in withCredentials to prevent the global env from crashing the stages
+            withCredentials([string(credentialsId: 'GITHUB_BOT_TOKEN', variable: 'GITHUB_TOKEN')]) {
+                script {
+                    node(env.NODE_NAME) {
+                        // Capture the Git URL
+                        env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
                         
-                        # 3. Install/Update dependencies
-                        ./venv/bin/python3 -m pip install --upgrade pip
-                        if [ -f "requirements.txt" ]; then
-                            ./venv/bin/pip install -r requirements.txt
-                        fi
-                        
-                        # 4. Trigger the Autonomous Multi-File Agent
-                        # GITHUB_TOKEN is inherited from the top-level environment block
-                        ./venv/bin/python3 healer.py
-                    '''
+                        sh '''
+                            # 1. Ensure virtual environment exists
+                            if [ ! -d "venv" ]; then
+                                python3 -m venv venv
+                            fi
+                            
+                            # 2. Update pip and install dependencies
+                            ./venv/bin/python3 -m pip install --upgrade pip
+                            if [ -f "requirements.txt" ]; then
+                                ./venv/bin/pip install -r requirements.txt
+                            fi
+                            
+                            # 3. Trigger Healer in unbuffered mode to see logs in real-time
+                            ./venv/bin/python3 -u healer.py
+                        '''
+                    }
                 }
             }
         }
