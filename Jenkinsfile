@@ -1,8 +1,11 @@
 pipeline {
     agent any
 
-    // Optional: If you haven't set GITHUB_PAT globally in Jenkins, 
-    // make sure it's injected here or in your Jenkins credentials store.
+    // We define the environment variable globally here to ensure 
+    // Jenkins maps the secret to the variable consistently.
+    environment {
+        GITHUB_TOKEN = credentials('GITHUB_BOT_TOKEN')
+    }
 
     stages {
         stage('Environment Check') {
@@ -14,8 +17,6 @@ pipeline {
 
         stage('Dynamic Build & Test') {
             steps {
-                // This bash script mirrors the intelligence of your AI agent.
-                // It detects the project type and runs the correct command.
                 sh '''
                     echo "🔍 CI/CD: Detecting build system..."
                     
@@ -58,24 +59,22 @@ pipeline {
         failure {
             echo "🔥 Build failed! Initiating AI SRE Agent..."
             
-            // SECURITY: Securely inject the GitHub token into the environment
-            withCredentials([string(credentialsId: 'GITHUB_BOT_TOKEN', variable: 'GITHUB_TOKEN')]) {
-                script {
-                    // Capture the Git URL so the Python script knows where to push
-                    env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
+            script {
+                // Capture the Git URL so the Python script knows where to push
+                env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
+                
+                sh '''
+                    # 1. Ensure virtual environment exists
+                    python3 -m venv venv
                     
-                    sh '''
-                        # 1. Ensure virtual environment exists
-                        python3 -m venv venv
-                        
-                        # 2. Install dependencies
-                        ./venv/bin/pip install -r requirements.txt
-                        /var/lib/jenkins/workspace/Agent-CI-Pipeline/venv/bin/python3 -m pip install --upgrade pip
-                        
-                        # 3. Trigger the Autonomous Multi-File Agent
-                        ./venv/bin/python3 healer.py
-                    '''
-                }
+                    # 2. Install dependencies
+                    ./venv/bin/pip install -r requirements.txt
+                    ./venv/bin/python3 -m pip install --upgrade pip
+                    
+                    # 3. Trigger the Autonomous Multi-File Agent
+                    # GITHUB_TOKEN is now automatically available from the environment block
+                    ./venv/bin/python3 healer.py
+                '''
             }
         }
     }
