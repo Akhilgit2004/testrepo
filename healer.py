@@ -161,13 +161,13 @@ def get_supporting_context(target_file, error_log, broken_code):
     return supporting_data
 
 def classify_error(error_log):
-    """Determines if the error is a Code Error or an Environment/Dependency Error."""
-    # Java/Maven patterns
-    if any(x in error_log for x in ["package ... does not exist", "symbol: class", "Could not resolve dependencies"]):
+    """Uses Regex to reliably detect environment/dependency errors."""
+    # Java: 'package com.foo does not exist' or 'symbol: class Gson'
+    if re.search(r"package [\w.]+ does not exist", error_log) or "symbol: class" in error_log:
         return "DEPENDENCY", "pom.xml"
     
-    # Python patterns
-    if "ModuleNotFoundError" in error_log or "No module named" in error_log:
+    # Python: 'ModuleNotFoundError'
+    if "ModuleNotFoundError" in error_log:
         return "DEPENDENCY", "requirements.txt"
     
     # NPM patterns
