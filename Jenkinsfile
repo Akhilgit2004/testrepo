@@ -57,16 +57,26 @@ pipeline {
     post {
         failure {
             echo "🔥 Build failed! Initiating AI SRE Agent..."
-            sh '''
-                # 1. Ensure virtual environment exists
-                python3 -m venv venv
-                
-                # 2. Install dependencies
-                ./venv/bin/pip install -r requirements.txt
-                
-                # 3. Trigger the Autonomous Multi-File Agent
-                ./venv/bin/python3 healer.py
-            '''
+            
+            // SECURITY: Securely inject the GitHub token into the environment
+            withCredentials([string(credentialsId: 'GITHUB_BOT_TOKEN', variable: 'GITHUB_TOKEN')]) {
+                script {
+                    // Capture the Git URL so the Python script knows where to push
+                    env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
+                    
+                    sh '''
+                        # 1. Ensure virtual environment exists
+                        python3 -m venv venv
+                        
+                        # 2. Install dependencies
+                        ./venv/bin/pip install -r requirements.txt
+                        /var/lib/jenkins/workspace/Agent-CI-Pipeline/venv/bin/python3 -m pip install --upgrade pip
+                        
+                        # 3. Trigger the Autonomous Multi-File Agent
+                        ./venv/bin/python3 healer.py
+                    '''
+                }
+            }
         }
     }
 }

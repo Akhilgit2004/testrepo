@@ -91,28 +91,34 @@ def create_pull_request(explanation, target_file, attempt):
     build_id = os.environ.get('BUILD_ID', 'manual')
     branch_name = f"healer-fix-{build_id}"
     
+    # NEW: Fetch GitHub Token from Environment (Set this in Jenkins Credentials)
+    gh_token = os.environ.get('GITHUB_TOKEN')
+    repo_url = os.environ.get('GIT_URL') # e.g., https://github.com/user/repo.git
+
     pr_title = f"🤖 AI Fix: Resolved build failure in {target_file}"
-    pr_body = f"""## 🚨 Automated Fix Report
-The Healer Agent detected a build failure in `{target_file}`.
-
-### 🛠️ What was fixed:
-{explanation}
-
-### 📊 Stats:
-- **Build ID:** {build_id}
-- **Attempts taken:** {attempt}
-- **Verified locally:** ✅ Yes
-
-*This PR was generated automatically by the Healer SRE Agent.*
-"""
+    pr_body = f"## 🚨 Automated Fix Report\n..." # (Keep your existing body)
 
     try:
-        subprocess.run(['git', 'checkout', '-b', branch_name], check=True, capture_output=True)
-        subprocess.run(['git', 'add', '-u'], check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', f"fix: AI generated repair for {target_file}"], check=True, capture_output=True)
-        print(f"☁️ Pushing branch {branch_name} to origin...")
-        subprocess.run(['git', 'push', 'origin', branch_name], check=True, capture_output=True)
+        # Step 1: Configure Git identity for Jenkins
+        subprocess.run(['git', 'config', 'user.name', 'Healer Agent'], check=True)
+        subprocess.run(['git', 'config', 'user.email', 'healer@agent.ai'], check=True)
+
+        # Step 2: Handle Authentication
+        if gh_token and repo_url:
+            # Inject token into the URL: https://TOKEN@github.com/user/repo.git
+            authenticated_url = repo_url.replace("https://", f"https://{gh_token}@")
+            subprocess.run(['git', 'remote', 'set-url', 'origin', authenticated_url], check=True)
+
+        # Step 3: Branch, Add, Commit
+        subprocess.run(['git', 'checkout', '-b', branch_name], check=True)
+        subprocess.run(['git', 'add', '-u'], check=True)
+        subprocess.run(['git', 'commit', '-m', f"fix: AI generated repair for {target_file}"], check=True)
         
+        # Step 4: Push (Using -u to set upstream)
+        print(f"☁️ Pushing branch {branch_name} to origin...")
+        subprocess.run(['git', 'push', '-u', 'origin', branch_name], check=True)
+        
+        # Step 5: Open PR (The GH CLI uses GITHUB_TOKEN automatically if set)
         print(f"🚀 Opening Pull Request on GitHub...")
         subprocess.run([
             'gh', 'pr', 'create', 
@@ -120,12 +126,11 @@ The Healer Agent detected a build failure in `{target_file}`.
             '--body', pr_body, 
             '--head', branch_name, 
             '--base', 'main'
-        ], check=True, capture_output=True)
+        ], check=True)
         
-        print(f"✅ Pull Request successfully created for {branch_name}!")
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ GitHub Action failed: {e.stderr.decode('utf-8') if e.stderr else e}")
+    except Exception as e:
+        print(f"❌ Git/GitHub Error: {e}")
         return False
 
 # ==========================================
