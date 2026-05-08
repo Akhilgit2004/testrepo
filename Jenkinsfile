@@ -10,24 +10,24 @@ pipeline {
 
         stage('Dynamic Build & Test') {
             steps {
-                sh '''
+                sh '''#!/bin/bash
+                    # TURN OFF COMMAND TRACING: This prevents Jenkins from printing 
+                    # all the "package.json" and "Makefile" checks to the console log.
+                    set +x
+                    
                     echo "🔍 CI/CD: Detecting build system..."
                     
                     if [ -f "Makefile" ]; then
                         echo "🛠️ Make detected"
-                        echo "--- REAL BUILD START ---"
                         make
                     elif [ -f "package.json" ]; then
                         echo "🛠️ npm detected"
-                        echo "--- REAL BUILD START ---"
                         npm install && npm run build
                     elif [ -f "pom.xml" ]; then
                         echo "🛠️ Maven detected"
-                        echo "--- REAL BUILD START ---"
                         mvn clean compile
                     elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
                         echo "🛠️ Gradle detected"
-                        echo "--- REAL BUILD START ---"
                         if [ -f "gradlew" ]; then
                             ./gradlew build
                         else
@@ -36,15 +36,12 @@ pipeline {
                     # Fallbacks for standalone scripts
                     elif ls *.java 1> /dev/null 2>&1; then
                         echo "🛠️ Standalone Java detected"
-                        echo "--- REAL BUILD START ---"
                         javac *.java
                     elif ls *.cpp 1> /dev/null 2>&1; then
                         echo "🛠️ Standalone C++ detected"
-                        echo "--- REAL BUILD START ---"
                         g++ *.cpp -o app
                     elif ls *.py 1> /dev/null 2>&1; then
                         echo "🛠️ Standalone Python detected"
-                        echo "--- REAL BUILD START ---"
                         python3 -m py_compile *.py
                     else
                         echo "❌ No standard project files found!"
@@ -61,7 +58,7 @@ pipeline {
             
             script {
                 // Since 'agent any' is used at the top, we are already in the workspace.
-                // We just use 'script' to assign the Git URL to an environment variable.
+                // We capture the Git URL so the Python script knows where to push.
                 env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
                 
                 sh '''
@@ -76,8 +73,8 @@ pipeline {
                         ./venv/bin/pip install -r requirements.txt
                     fi
                     
-                    # 3. Trigger Healer in unbuffered mode
-                    # This will now correctly find GITHUB_TOKEN in Global Properties
+                    # 3. Trigger Hybrid Healer in unbuffered mode
+                    # Ensure GITHUB_TOKEN is set in Manage Jenkins -> System -> Global Properties
                     ./venv/bin/python3 -u healer.py
                 '''
             }
