@@ -125,36 +125,36 @@ def get_fixed_code(target_file, file_content, diagnosis):
     except Exception as e:
         return ""
     
-def get_supporting_context(content, current_file_path):
-    """Scans the file for local imports and returns their content as context."""
-    directory = os.path.dirname(current_file_path) or "."
+def get_supporting_context(target_file, error_log, broken_code):
+    """Physically crawls the workspace to find ANY file mentioned in the error."""
+    print("🕵️ SEARCHING: Agent is hunting for related files in the directory...")
+    workspace_dir = "." 
     supporting_data = ""
-    
-    # Simple regex to find potential local file references
-    # Java: import com.pkg.ClassName; -> ClassName.java
-    # Python: from module import ... -> module.py
-    # C++: #include "header.h" -> header.h
-    patterns = [
-        r'import\s+[\w.]+\.(\w+);',       # Java imports
-        r'from\s+(\w+)\s+import',         # Python local imports
-        r'#include\s+"([^"]+)"'           # C++ local headers
-    ]
-    
     found_files = []
-    for pattern in patterns:
-        matches = re.findall(pattern, content)
-        for match in matches:
-            # Try various extensions for the found name
-            for ext in ['.java', '.py', '.cpp', '.h']:
-                potential_file = os.path.join(directory, f"{match}{ext}" if not match.endswith(ext) else match)
-                if os.path.exists(potential_file) and potential_file != current_file_path:
-                    found_files.append(potential_file)
+    
+    # 1. Grab every "CapitalizedWord" from the error and the code.
+    # In Java, these are almost always the Class names we need.
+    potential_names = set(re.findall(r'\b[A-Z][a-zA-Z0-9_]+\b', error_log + broken_code))
+    
+    # 2. Crawl every folder in the Jenkins workspace
+    for root, dirs, files in os.walk(workspace_dir):
+        # Skip system noise
+        if any(ignored in root for ignored in ['.git', 'venv', 'node_modules', 'target']):
+            continue
+            
+        for file in files:
+            # Check if the filename (without .java/.py) matches any word we found
+            base_name = os.path.splitext(file)[0]
+            if base_name in potential_names and file != os.path.basename(target_file):
+                file_path = os.path.join(root, file)
+                found_files.append(file_path)
 
-    # Read the content of the found supporting files
-    for file in list(set(found_files))[:3]: # Limit to 3 files to save tokens
+    # 3. Read the files we found and prepare them for the AI
+    for file_path in list(set(found_files))[:3]:
         try:
-            with open(file, 'r') as f:
-                supporting_data += f"\n--- SUPPORTING CONTEXT: {file} ---\n{f.read()}\n"
+            with open(file_path, 'r') as f:
+                print(f"👀 CONTEXT ACQUIRED: Reading {file_path}")
+                supporting_data += f"\n--- REFERENCE FILE: {file_path} ---\n{f.read()}\n"
         except:
             continue
             
