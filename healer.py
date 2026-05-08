@@ -159,6 +159,22 @@ def get_supporting_context(target_file, error_log, broken_code):
             continue
             
     return supporting_data
+
+def classify_error(error_log):
+    """Determines if the error is a Code Error or an Environment/Dependency Error."""
+    # Java/Maven patterns
+    if any(x in error_log for x in ["package ... does not exist", "symbol: class", "Could not resolve dependencies"]):
+        return "DEPENDENCY", "pom.xml"
+    
+    # Python patterns
+    if "ModuleNotFoundError" in error_log or "No module named" in error_log:
+        return "DEPENDENCY", "requirements.txt"
+    
+    # NPM patterns
+    if "npm ERR!" in error_log and "missing" in error_log:
+        return "DEPENDENCY", "package.json"
+        
+    return "CODE", None
 # ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
@@ -170,21 +186,32 @@ if __name__ == "__main__":
     log_content = get_latest_jenkins_log()
     
     # 1. Target Acquisition (Bottom-Up Search + Ignore List)
-    potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
-    ignore_list = ["package.json", "package-lock.json", "pom.xml", "Makefile", "build.gradle", "healer.py"]
-    
+    error_type, config_file = classify_error(log_content)
     target_file = None
-    for file_path in reversed(potential_files):
-        clean_path = file_path.strip()
-        if any(ignored in clean_path for ignored in ignore_list) or "://" in clean_path:
-            continue
-        if os.path.exists(clean_path):
-            target_file = clean_path
-            print(f"🎯 Target confirmed: {target_file}")
-            break
+
+    if error_type == "DEPENDENCY" and os.path.exists(config_file):
+        # DIRECT HIT: We know exactly which config file to fix
+        target_file = config_file
+        print(f"🎯 PIVOT: Dependency error detected. Directly targeting: {target_file}")
+    else:
+        # SEARCH MODE: Look for the source file that crashed
+        print("🔍 SEARCHING: Looking for the broken source file...")
+        potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
+        
+        # We keep the ignore list for SOURCE code searches only
+        source_ignore = ["package.json", "package-lock.json", "pom.xml", "Makefile", "build.gradle", "healer.py"]
+        
+        for file_path in reversed(potential_files):
+            clean_path = file_path.strip()
+            if any(ignored in clean_path for ignored in source_ignore) or "://" in clean_path:
+                continue
+            if os.path.exists(clean_path):
+                target_file = clean_path
+                print(f"🎯 TARGET ACQUIRED: {target_file}")
+                break
 
     if not target_file:
-        print("💀 ERROR: Could not find a valid source file in the logs. Aborting.")
+        print("💀 ERROR: Could not identify a target file to fix. Aborting.")
         exit(1)
 
     with open(target_file, 'r') as f:
