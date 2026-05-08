@@ -127,7 +127,7 @@ if __name__ == "__main__":
     
     # 1. Target Acquisition (Bottom-Up Search + Ignore List)
     potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
-    ignore_list = ["package.json", "package-lock.json", "pom.xml", "Makefile", "build.gradle"]
+    ignore_list = ["package.json", "package-lock.json", "pom.xml", "Makefile", "build.gradle", "healer.py"]
     
     target_file = None
     for file_path in reversed(potential_files):
