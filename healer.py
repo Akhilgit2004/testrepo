@@ -162,15 +162,15 @@ def get_supporting_context(target_file, error_log, broken_code):
 
 def classify_error(error_log):
     """Uses Regex to reliably detect environment/dependency errors."""
-    # Java: 'package com.foo does not exist' or 'symbol: class Gson'
+    # Java: Matches 'package com.foo.bar does not exist' or missing symbols
     if re.search(r"package [\w.]+ does not exist", error_log) or "symbol: class" in error_log:
         return "DEPENDENCY", "pom.xml"
     
-    # Python: 'ModuleNotFoundError'
-    if "ModuleNotFoundError" in error_log:
+    # Python: Matches 'ModuleNotFoundError'
+    if "ModuleNotFoundError" in error_log or "No module named" in error_log:
         return "DEPENDENCY", "requirements.txt"
     
-    # NPM patterns
+    # NPM: Matches missing packages
     if "npm ERR!" in error_log and "missing" in error_log:
         return "DEPENDENCY", "package.json"
         
@@ -178,27 +178,33 @@ def classify_error(error_log):
 # ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
-
 if __name__ == "__main__":
     print("\n" + "="*50)
     print("🚨 HYBRID HEALER AGENT: INITIATING RECOVERY...")
     
     log_content = get_latest_jenkins_log()
     
-    # 1. Target Acquisition (Bottom-Up Search + Ignore List)
+    # 1. CLASSIFY THE ERROR & DYNAMIC TARGETING
     error_type, config_file = classify_error(log_content)
     target_file = None
 
-    if error_type == "DEPENDENCY" and os.path.exists(config_file):
-        # DIRECT HIT: We know exactly which config file to fix
-        target_file = config_file
-        print(f"🎯 PIVOT: Dependency error detected. Directly targeting: {target_file}")
+    if error_type == "DEPENDENCY":
+        if os.path.exists(config_file):
+            target_file = config_file
+            print(f"🎯 PIVOT: Dependency error detected. Directly targeting: {target_file}")
+        else:
+            # If the config file is missing entirely, we create a skeleton for the AI
+            print(f"📁 NOTICE: {config_file} missing. Creating a skeleton file for the AI...")
+            with open(config_file, 'w') as f:
+                if config_file == "pom.xml":
+                    f.write('<?xml version="1.0" encoding="UTF-8"?>\n<project xmlns="http://maven.apache.org/POM/4.0.0">\n    <modelVersion>4.0.0</modelVersion>\n    <dependencies></dependencies>\n</project>')
+                else:
+                    f.write("# Auto-generated Requirements File\n")
+            target_file = config_file
     else:
-        # SEARCH MODE: Look for the source file that crashed
+        # SEARCH MODE: Look for the broken source file using our ignore list
         print("🔍 SEARCHING: Looking for the broken source file...")
         potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
-        
-        # We keep the ignore list for SOURCE code searches only
         source_ignore = ["package.json", "package-lock.json", "pom.xml", "Makefile", "build.gradle", "healer.py"]
         
         for file_path in reversed(potential_files):
@@ -211,9 +217,10 @@ if __name__ == "__main__":
                 break
 
     if not target_file:
-        print("💀 ERROR: Could not identify a target file to fix. Aborting.")
+        print("💀 ERROR: Could not identify a target file. Aborting.")
         exit(1)
 
+    # Read the content of the target file (whether it's code or pom.xml)
     with open(target_file, 'r') as f:
         original_code = f.read()
 
@@ -221,19 +228,27 @@ if __name__ == "__main__":
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
         
-        # STAGE 1: Reasoning
-        print("🧠 STAGE 1: Diagnosing with local context...")
-        context = get_supporting_context(target_file, log_content, original_code)
-        if context:
-            print(f"👀 Found supporting context in related files.")
-            
-        diagnosis = get_diagnosis(original_code, log_content, context)
-        print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis}\n")
+        # STAGE 1: Preliminary Diagnosis
+        print("🧠 STAGE 1: Analyzing error and seeking clues...")
+        initial_diagnosis = get_diagnosis(original_code, log_content, "")
         
-        # STAGE 2: Coding
-        print("🛠️ STAGE 2: Generating full file rewrite...")
-        raw_response = get_fixed_code(target_file, original_code, diagnosis,context)
-        print(f"\n🤖 AI RAW CODE RESPONSE:\n{raw_response[:200]}... [TRUNCATED FOR LOGS]\n")
+        # JIT Context Fetching (Surgical Search)
+        context = get_supporting_context(target_file, initial_diagnosis, original_code)
+        diagnosis_to_use = initial_diagnosis
+        
+        if context:
+            print("🧠 STAGE 1.5: Refining diagnosis with discovered context...")
+            diagnosis_to_use = get_diagnosis(original_code, log_content, context)
+        
+        print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis_to_use}\n")
+
+        if "API Error:" in diagnosis_to_use:
+            print("💀 ERROR: LLM Timeout. Retrying...")
+            continue
+
+        # STAGE 2: Remediation
+        print(f"🛠️ STAGE 2: Generating full rewrite for {target_file}...")
+        raw_response = get_fixed_code(target_file, original_code, diagnosis_to_use, context)
         
         code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
         
@@ -242,20 +257,19 @@ if __name__ == "__main__":
             with open(target_file, 'w') as f:
                 f.write(fixed_code)
                 
-            # STAGE 3: Verification
+            # STAGE 3: Verification (Runs Maven/Javac/etc based on file type)
             verified, errors = verify_fix(target_file)
             if verified:
-                print("✅ VERIFIED: Fix compiled successfully!")
-                create_pull_request(diagnosis, target_file, attempt)
+                print(f"✅ SUCCESS: {target_file} fixed and verified!")
+                create_pull_request(diagnosis_to_use, target_file, attempt)
                 success = True
                 break
             else:
-                print(f"❌ Verification failed. Compiler said:\n{errors}")
-                print("⏪ Reverting file for next attempt...")
+                print(f"❌ FAIL: Fix did not compile. Compiler said:\n{errors}")
                 with open(target_file, 'w') as f:
-                    f.write(original_code)
+                    f.write(original_code) # Revert for next try
         else:
-            print("❌ ERROR: AI did not provide a markdown code block.")
+            print("❌ ERROR: AI failed to provide a valid code block.")
 
     if not success:
         print("💀 ALL ATTEMPTS FAILED. Human intervention required.")
