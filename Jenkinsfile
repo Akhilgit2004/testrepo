@@ -1,9 +1,9 @@
 pipeline {
     agent any
 
-    // We define the environment variable globally here to ensure 
-    // Jenkins maps the secret to the variable consistently.
     environment {
+        // Securely maps your Jenkins Credential to an environment variable
+        // Make sure the ID 'GITHUB_BOT_TOKEN' exists in Jenkins Credentials
         GITHUB_TOKEN = credentials('GITHUB_BOT_TOKEN')
     }
 
@@ -60,21 +60,30 @@ pipeline {
             echo "🔥 Build failed! Initiating AI SRE Agent..."
             
             script {
-                // Capture the Git URL so the Python script knows where to push
-                env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
-                
-                sh '''
-                    # 1. Ensure virtual environment exists
-                    python3 -m venv venv
+                // RE-ANCHOR CONTEXT: This node block gives the 'sh' steps access to the workspace
+                // This prevents the 'Required context class hudson.FilePath is missing' error.
+                node(env.NODE_NAME) {
                     
-                    # 2. Install dependencies
-                    ./venv/bin/pip install -r requirements.txt
-                    ./venv/bin/python3 -m pip install --upgrade pip
+                    // 1. Capture the Git URL for the healer script
+                    env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
                     
-                    # 3. Trigger the Autonomous Multi-File Agent
-                    # GITHUB_TOKEN is now automatically available from the environment block
-                    ./venv/bin/python3 healer.py
-                '''
+                    sh '''
+                        # 2. Ensure virtual environment exists
+                        if [ ! -d "venv" ]; then
+                            python3 -m venv venv
+                        fi
+                        
+                        # 3. Install/Update dependencies
+                        ./venv/bin/python3 -m pip install --upgrade pip
+                        if [ -f "requirements.txt" ]; then
+                            ./venv/bin/pip install -r requirements.txt
+                        fi
+                        
+                        # 4. Trigger the Autonomous Multi-File Agent
+                        # GITHUB_TOKEN is inherited from the top-level environment block
+                        ./venv/bin/python3 healer.py
+                    '''
+                }
             }
         }
     }
