@@ -50,7 +50,6 @@ def verify_fix(target_file):
     # 4. Check for Gradle (Java)
     elif os.path.exists("build.gradle") or os.path.exists("build.gradle.kts"):
         print("🛠️ Build System Detected: Gradle (Java)")
-        # Use local gradlew wrapper if it exists, otherwise use system gradle
         if os.path.exists("gradlew"):
             compile_cmd = ['./gradlew', 'build']
         else:
@@ -92,7 +91,6 @@ def create_pull_request(explanation, target_file, attempt):
     build_id = os.environ.get('BUILD_ID', 'manual')
     branch_name = f"healer-fix-{build_id}"
     
-    # AI-Generated PR Title and Body
     pr_title = f"🤖 AI Fix: Resolved build failure in {target_file}"
     pr_body = f"""## 🚨 Automated Fix Report
 The Healer Agent detected a build failure in `{target_file}`.
@@ -109,18 +107,12 @@ The Healer Agent detected a build failure in `{target_file}`.
 """
 
     try:
-        # 1. Create and switch to a new branch
         subprocess.run(['git', 'checkout', '-b', branch_name], check=True, capture_output=True)
-        
-        # 2. Add and commit changes
         subprocess.run(['git', 'add', '-u'], check=True, capture_output=True)
         subprocess.run(['git', 'commit', '-m', f"fix: AI generated repair for {target_file}"], check=True, capture_output=True)
-        
-        # 3. Push to GitHub (Using the authenticated git environment)
         print(f"☁️ Pushing branch {branch_name} to origin...")
         subprocess.run(['git', 'push', 'origin', branch_name], check=True, capture_output=True)
         
-        # 4. Open the Pull Request using GitHub CLI
         print(f"🚀 Opening Pull Request on GitHub...")
         subprocess.run([
             'gh', 'pr', 'create', 
@@ -143,9 +135,6 @@ The Healer Agent detected a build failure in `{target_file}`.
 def gather_context(main_file_content):
     """Scans for local includes and extracts their content for AI context."""
     context_str = ""
-    
-    # Regex to find C++ local includes, e.g., #include "utils.h"
-    # (Ignores system includes like <iostream>)
     local_includes = re.findall(r'#include\s+"([^"]+)"', main_file_content)
     
     for file_name in local_includes:
@@ -198,7 +187,7 @@ RESPONSE:"""
         "options": {
             "temperature": 0.1,
             "num_predict": 4096,
-            "num_ctx": 24576 # Increased to ensure large contexts fit easily
+            "num_ctx": 24576 
         }
     }
     
@@ -219,16 +208,26 @@ if __name__ == "__main__":
     
     log_content = get_latest_jenkins_log()
     
-    # Identify target file from logs
-    file_match = re.search(r'([a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))', str(log_content))
-    target_file = file_match.group(1) if file_match else None
+    # Find all potential file paths, ensuring word boundaries (\b) 
+    potential_files = re.findall(r'([a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
+    
+    target_file = None
+    
+    # Bulletproof Check: Only target a file if it ACTUALLY exists in the workspace
+    for file_path in potential_files:
+        if "://" in file_path:  # Ignore URLs like https://github.com
+            continue
+            
+        if os.path.exists(file_path):
+            target_file = file_path
+            print(f"🎯 Target confirmed: {target_file}")
+            break
 
-    if not target_file or not os.path.exists(target_file):
-        print(f"⚠️ Target file '{target_file}' not found. Aborting.")
+    if not target_file:
+        print(f"⚠️ Could not find any valid, existing target file in the logs. Aborting.")
         exit(1)
 
-    # ADDED: Read the original code ONCE before the loop starts
-    # This ensures we always have the true baseline safe in memory.
+    # Read the original code ONCE before the loop starts
     with open(target_file, 'r') as f:
         original_code = f.read()
 
@@ -239,10 +238,10 @@ if __name__ == "__main__":
         supporting_context = gather_context(original_code)
         print(f"🛠️ Generating fix via {MODEL}...")
         
-        # Notice we pass original_code here so it doesn't spiral into hallucination
+        # Pass original_code here so it doesn't spiral into hallucination
         raw_response = get_fixed_code(original_code, log_content, supporting_context, attempt)
     
-        # FIXED: Using `{3}` instead of literal triple backticks to avoid markdown parsing breaks
+        # Using `{3}` instead of literal triple backticks to avoid markdown parsing breaks
         code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
         
         if code_block_match:
@@ -267,7 +266,7 @@ if __name__ == "__main__":
                 print(f"❌ VERIFICATION FAILED. Logged error for next attempt.")
                 log_content = errors # Feed the NEW error back to the LLM
                 
-                # ADDED: State Restoration. Revert file back to original before next loop
+                # State Restoration. Revert file back to original before next loop
                 with open(target_file, 'w') as f:
                     f.write(original_code)
         else:
@@ -275,9 +274,8 @@ if __name__ == "__main__":
 
     if not success:
         print("💀 ALL ATTEMPTS FAILED. Human intervention required.")
-        # ADDED: Final cleanup to ensure Jenkins workspace isn't left dirty
+        # Final cleanup to ensure Jenkins workspace isn't left dirty
         with open(target_file, 'w') as f:
             f.write(original_code)
             
     print("="*50)
-    
