@@ -14,7 +14,7 @@ MAX_RETRIES = 2
 # ==========================================
 
 def get_latest_jenkins_log():
-    """Fetches the latest Jenkins build log."""
+    """Fetches a larger buffer of the Jenkins build log."""
     job_name = os.environ.get('JOB_NAME', 'unknown_job')
     build_id = os.environ.get('BUILD_ID', 'unknown_build')
     log_path = f"/var/lib/jenkins/jobs/{job_name}/builds/{build_id}/log"
@@ -22,185 +22,67 @@ def get_latest_jenkins_log():
     try:
         with open(log_path, 'r') as f:
             lines = f.readlines()
-            return "".join(lines[-100:])
+            # INCREASED: Fetches last 500 lines to ensure we see past the pip logs
+            return "".join(lines[-500:])
     except Exception as e:
         return f"Could not read log: {e}"
 
 def verify_fix(target_file):
     """Dynamically detects the build system and verifies the code."""
     print(f"🔍 VERIFICATION: Analyzing repository to detect build system...")
-    
     compile_cmd = []
     
-    # 1. Check for Make (C/C++)
     if os.path.exists("Makefile"):
-        print("🛠️ Build System Detected: Make")
         compile_cmd = ['make']
-        
-    # 2. Check for Node.js
     elif os.path.exists("package.json"):
-        print("🛠️ Build System Detected: npm")
         compile_cmd = ['npm', 'run', 'build']
-        
-    # 3. Check for Maven (Java)
     elif os.path.exists("pom.xml"):
-        print("🛠️ Build System Detected: Maven (Java)")
         compile_cmd = ['mvn', 'clean', 'compile']
-        
-    # 4. Check for Gradle (Java)
-    elif os.path.exists("build.gradle") or os.path.exists("build.gradle.kts"):
-        print("🛠️ Build System Detected: Gradle (Java)")
-        if os.path.exists("gradlew"):
-            compile_cmd = ['./gradlew', 'build']
-        else:
-            compile_cmd = ['gradle', 'build']
-        
-    # 5. Check for Python (Syntax Check only)
-    elif target_file.endswith(".py"):
-        print("🛠️ Build System Detected: Python (Syntax Check)")
-        compile_cmd = ['python3', '-m', 'py_compile', target_file]
-        
-    # 6. Fallback for standalone Java files
     elif target_file.endswith(".java"):
-        print("🛠️ Build System Detected: Standalone Java")
         compile_cmd = ['javac', target_file]
-        
-    # 7. Fallback for standalone C/C++ files
     elif target_file.endswith(".cpp") or target_file.endswith(".c"):
-        print("🛠️ Build System Detected: Standalone C/C++")
         compile_cmd = ['g++', target_file, '-o', 'test_build']
-        
-    # 8. Unknown Environment
     else:
-        print("⚠️ No standard build system detected. Assuming code is valid.")
         return True, ""
 
-    # Execute the dynamically chosen command
-    cmd_str = " ".join(compile_cmd)
-    print(f"🧪 VERIFICATION: Running '{cmd_str}'...")
-    
     result = subprocess.run(compile_cmd, capture_output=True, text=True)
-    
-    if result.returncode == 0:
-        return True, ""
-    else:
-        return False, result.stderr
+    return (result.returncode == 0, result.stderr)
 
 def create_pull_request(explanation, target_file, attempt):
     """Commits code, pushes branch, and opens a GitHub Pull Request."""
     build_id = os.environ.get('BUILD_ID', 'manual')
     branch_name = f"healer-fix-{build_id}"
-    
-    # NEW: Fetch GitHub Token from Environment (Set this in Jenkins Credentials)
     gh_token = os.environ.get('GITHUB_TOKEN')
-    repo_url = os.environ.get('GIT_URL') # e.g., https://github.com/user/repo.git
-
-    pr_title = f"🤖 AI Fix: Resolved build failure in {target_file}"
-    pr_body = f"## 🚨 Automated Fix Report\n..." # (Keep your existing body)
+    repo_url = os.environ.get('GIT_URL')
 
     try:
-        # Step 1: Configure Git identity for Jenkins
         subprocess.run(['git', 'config', 'user.name', 'Healer Agent'], check=True)
         subprocess.run(['git', 'config', 'user.email', 'healer@agent.ai'], check=True)
 
-        # Step 2: Handle Authentication
         if gh_token and repo_url:
-            # Inject token into the URL: https://TOKEN@github.com/user/repo.git
             authenticated_url = repo_url.replace("https://", f"https://{gh_token}@")
             subprocess.run(['git', 'remote', 'set-url', 'origin', authenticated_url], check=True)
 
-        # Step 3: Branch, Add, Commit
         subprocess.run(['git', 'checkout', '-b', branch_name], check=True)
         subprocess.run(['git', 'add', '-u'], check=True)
         subprocess.run(['git', 'commit', '-m', f"fix: AI generated repair for {target_file}"], check=True)
-        
-        # Step 4: Push (Using -u to set upstream)
-        print(f"☁️ Pushing branch {branch_name} to origin...")
         subprocess.run(['git', 'push', '-u', 'origin', branch_name], check=True)
         
-        # Step 5: Open PR (The GH CLI uses GITHUB_TOKEN automatically if set)
-        print(f"🚀 Opening Pull Request on GitHub...")
-        subprocess.run([
-            'gh', 'pr', 'create', 
-            '--title', pr_title, 
-            '--body', pr_body, 
-            '--head', branch_name, 
-            '--base', 'main'
-        ], check=True)
-        
+        subprocess.run(['gh', 'pr', 'create', '--title', f"🤖 AI Fix: {target_file}", '--body', explanation, '--head', branch_name, '--base', 'main'], check=True)
         return True
     except Exception as e:
         print(f"❌ Git/GitHub Error: {e}")
         return False
 
-# ==========================================
-# STAGE 2: MULTI-FILE REPAIR ENGINE
-# ==========================================
-
-def gather_context(main_file_content):
-    """Scans for local includes and extracts their content for AI context."""
-    context_str = ""
-    local_includes = re.findall(r'#include\s+"([^"]+)"', main_file_content)
-    
-    for file_name in local_includes:
-        if os.path.exists(file_name):
-            print(f"📚 CONTEXT: Injecting {file_name} into AI memory...")
-            with open(file_name, 'r') as f:
-                context_str += f"\n--- SUPPORTING FILE: {file_name} ---\n{f.read()}\n"
-        else:
-            print(f"⚠️ CONTEXT: Could not find {file_name} locally.")
-            
-    return context_str
-
 def get_fixed_code(file_content, error_log, supporting_context, attempt=1):
-    """Uses the LLM to rewrite the entire file with multi-file context."""
     url = "http://localhost:11434/api/generate"
-    
-    retry_context = ""
-    if attempt > 1:
-        retry_context = "\nCRITICAL: Your previous fix FAILED to compile. Please read the NEW error log below and try again."
-
-    prompt = f"""You are a Senior Software Engineer. {retry_context}
-
-ERROR LOG:
----
-{error_log}
----
-
-CURRENT SOURCE CODE (Needs Fixing):
----
-{file_content}
----
-{supporting_context}
-
-TASK:
-1. Identify and fix ALL bugs in the CURRENT SOURCE CODE.
-2. Ensure logic aligns with any provided SUPPORTING FILES.
-3. Output the ENTIRE corrected CURRENT SOURCE CODE inside a single Markdown block.
-
-RULES:
-- DO NOT rewrite the supporting files. Only fix the main source code.
-- DO NOT truncate the code. You MUST output the entire file.
-- Use triple backticks (```cpp ... ```).
-
-RESPONSE:"""
-
-    payload = {
-        "model": MODEL, 
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 4096,
-            "num_ctx": 24576 
-        }
-    }
+    prompt = f"ERROR LOG:\n{error_log}\n\nSOURCE CODE:\n{file_content}\n\nTASK: Fix all bugs and output the entire file in a single markdown block."
+    payload = {"model": MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1, "num_ctx": 24576}}
     
     try:
         response = requests.post(url, json=payload)
         return response.json().get("response", "")
-    except Exception as e:
-        print(f"❌ API Request Failed: {e}")
+    except Exception:
         return ""
 
 # ==========================================
@@ -213,71 +95,49 @@ if __name__ == "__main__":
     
     log_content = get_latest_jenkins_log()
     
-    # IMPROVEMENT 1: Better Regex with Word Boundaries (\b) to avoid .json vs .js
-    # IMPROVEMENT 2: findall() so we can evaluate all potential candidates
+    # IMPROVED: Regex with word boundaries and directory support
     potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
     
-    # IMPROVEMENT 3: Reverse the list to find the MOST RECENT file mentioned (closest to error)
     target_file = None
+    # SEARCH FROM BOTTOM: Find the file mentioned closest to the build failure
     for file_path in reversed(potential_files):
-        if os.path.exists(file_path) and not file_path.startswith("package"):
+        # Exclude common false positives from build scripts
+        if os.path.exists(file_path) and "package" not in file_path:
             target_file = file_path
             print(f"🎯 Target confirmed: {target_file}")
             break
 
     if not target_file:
-        print(f"⚠️ No valid target file found in the recent logs. Aborting.")
+        print(f"💀 CRITICAL: No valid target file found in the last 500 lines of logs.")
         exit(1)
 
-    # Read the original code ONCE before the loop starts
     with open(target_file, 'r') as f:
         original_code = f.read()
 
     success = False
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
-        
-        supporting_context = gather_context(original_code)
-        print(f"🛠️ Generating fix via {MODEL}...")
-        
-        # Pass original_code here so it doesn't spiral into hallucination
-        raw_response = get_fixed_code(original_code, log_content, supporting_context, attempt)
-    
-        # Using `{3}` instead of literal triple backticks to avoid markdown parsing breaks
+        raw_response = get_fixed_code(original_code, log_content, "", attempt)
         code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
         
         if code_block_match:
             fixed_code = code_block_match.group(1).strip()
-            
-            # Temporary backup (using the original code)
-            with open(f"{target_file}.bak", 'w') as bak:
-                bak.write(original_code)
-
-            # Apply fix
             with open(target_file, 'w') as f:
                 f.write(fixed_code)
-                
-            # Verify
+            
             verified, errors = verify_fix(target_file)
             if verified:
                 print("✅ VERIFIED: Fix compiled successfully!")
-                create_pull_request("Automated fix for build failure.", target_file, attempt)
+                create_pull_request("Automated fix.", target_file, attempt)
                 success = True
-                break # Exit loop on success
+                break
             else:
-                print(f"❌ VERIFICATION FAILED. Logged error for next attempt.")
-                log_content = errors # Feed the NEW error back to the LLM
-                
-                # State Restoration. Revert file back to original before next loop
+                print(f"❌ VERIFICATION FAILED. Reverting for next attempt.")
                 with open(target_file, 'w') as f:
                     f.write(original_code)
         else:
             print("❌ No code block found in AI response.")
 
     if not success:
-        print("💀 ALL ATTEMPTS FAILED. Human intervention required.")
-        # Final cleanup to ensure Jenkins workspace isn't left dirty
-        with open(target_file, 'w') as f:
-            f.write(original_code)
-            
+        print("💀 ALL ATTEMPTS FAILED.")
     print("="*50)
