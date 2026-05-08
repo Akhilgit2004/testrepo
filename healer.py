@@ -95,29 +95,29 @@ def get_diagnosis(file_content, error_log, supporting_context=""):
     except Exception as e:
         return f"API Error: {e}"
 
-def get_fixed_code(target_file, file_content, diagnosis):
+def get_fixed_code(target_file, file_content, diagnosis,supporting_context):
     """STAGE 2: Generate the full rewritten file based on the diagnosis."""
     url = "http://localhost:11434/api/generate"
     
     # We now pass the target_file into the prompt to give the AI spatial awareness
-    prompt = f"""You are an automated code fixer. 
-    Based on the following diagnosis, fix the provided source code.
+    prompt = f"""You are an automated code remediation agent.
     
-    DIAGNOSIS:
-    {diagnosis}
+    DIAGNOSIS: {diagnosis}
+    FILE TO FIX: {target_file}
     
-    FILE NAME: {target_file}
+    SUPPORTING CONTEXT (The Ground Truth):
+    {supporting_context}
     
     SOURCE CODE:
     {file_content}
     
-    TASK: Output the ENTIRE corrected source file. Do not truncate. 
-    Wrap the code in a single Markdown block (```).
+    TASK: Fix {target_file} so it compiles and works with the SUPPORTING CONTEXT.
     
-    CRITICAL RULES:
-    1. DO NOT alter the class name, capitalization, or access modifiers (like adding 'public').
-    2. The class name must perfectly align with the FILE NAME.
-    3. Only fix the specific error mentioned in the diagnosis."""
+    RULES:
+    1. If the SOURCE CODE calls a method that doesn't exist in the SUPPORTING CONTEXT, change the call to a method that DOES exist.
+    2. Only output the full corrected code for {target_file} in a markdown block.
+    3. Do not modify the Supporting Context files.
+    """
     
     try:
         res = requests.post(url, json={"model": MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}}, timeout=300)
@@ -205,7 +205,7 @@ if __name__ == "__main__":
         
         # STAGE 2: Coding
         print("🛠️ STAGE 2: Generating full file rewrite...")
-        raw_response = get_fixed_code(target_file, original_code, diagnosis)
+        raw_response = get_fixed_code(target_file, original_code, diagnosis,context)
         print(f"\n🤖 AI RAW CODE RESPONSE:\n{raw_response[:200]}... [TRUNCATED FOR LOGS]\n")
         
         code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
