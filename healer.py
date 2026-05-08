@@ -213,23 +213,20 @@ if __name__ == "__main__":
     
     log_content = get_latest_jenkins_log()
     
-    # Find all potential file paths, ensuring word boundaries (\b) 
-    potential_files = re.search(r'(\b\w+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
+    # IMPROVEMENT 1: Better Regex with Word Boundaries (\b) to avoid .json vs .js
+    # IMPROVEMENT 2: findall() so we can evaluate all potential candidates
+    potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
     
+    # IMPROVEMENT 3: Reverse the list to find the MOST RECENT file mentioned (closest to error)
     target_file = None
-    
-    # Bulletproof Check: Only target a file if it ACTUALLY exists in the workspace
-    for file_path in potential_files:
-        if "://" in file_path:  # Ignore URLs like https://github.com
-            continue
-            
-        if os.path.exists(file_path):
+    for file_path in reversed(potential_files):
+        if os.path.exists(file_path) and not file_path.startswith("package"):
             target_file = file_path
             print(f"🎯 Target confirmed: {target_file}")
             break
 
     if not target_file:
-        print(f"⚠️ Could not find any valid, existing target file in the logs. Aborting.")
+        print(f"⚠️ No valid target file found in the recent logs. Aborting.")
         exit(1)
 
     # Read the original code ONCE before the loop starts
