@@ -214,7 +214,7 @@ if __name__ == "__main__":
     log_content = get_latest_jenkins_log()
     
     # Find all potential file paths, ensuring word boundaries (\b) 
-    potential_files = re.findall(r'([a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
+    potential_files = re.search(r'(\b\w+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
     
     target_file = None
     
