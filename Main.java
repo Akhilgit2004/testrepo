@@ -1,7 +1,8 @@
+import com.google.gson.Gson;
+
 public class Main {
     public static void main(String[] args) {
-        System.out.println("Booting up system...");
-        
-        Server.initialize(); 
+        Gson gson = new Gson();
+        System.out.println("Gson is ready to use!");
     }
 }
