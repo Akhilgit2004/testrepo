@@ -11,41 +11,92 @@ pipeline {
         stage('Dynamic Build & Test') {
             steps {
                 sh '''#!/bin/bash
-                    # TURN OFF COMMAND TRACING: This prevents Jenkins from printing 
-                    # all the "package.json" and "Makefile" checks to the console log.
+                    # TURN OFF COMMAND TRACING: Keeps logs clean
                     set +x
                     
-                    echo "🔍 CI/CD: Detecting build system..."
+                    echo "🔍 CI/CD: Initiating Global Workspace Scan..."
                     
-                    if [ -f "Makefile" ]; then
-                        echo "🛠️ Make detected"
-                        make
-                    elif [ -f "package.json" ]; then
-                        echo "🛠️ npm detected"
-                        npm install && npm run build
-                    elif [ -f "pom.xml" ]; then
-                        echo "🛠️ Maven detected"
-                        mvn clean compile
-                    elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-                        echo "🛠️ Gradle detected"
-                        if [ -f "gradlew" ]; then
-                            ./gradlew build
-                        else
-                            gradle build
+                    # This flag tracks if ANY build process fails across the entire workspace
+                    BUILD_FAILED=0
+
+                    # 1. Check C++
+                    if ls *.cpp 1> /dev/null 2>&1; then
+                        echo "🛠️ Compiling C++ files..."
+                        if ! g++ *.cpp -o app; then
+                            echo "❌ C++ Compilation Failed"
+                            BUILD_FAILED=1
                         fi
-                    # Fallbacks for standalone scripts
-                    elif ls *.java 1> /dev/null 2>&1; then
-                        echo "🛠️ Standalone Java detected"
-                        javac *.java
-                    elif ls *.cpp 1> /dev/null 2>&1; then
-                        echo "🛠️ Standalone C++ detected"
-                        g++ *.cpp -o app
-                    elif ls *.py 1> /dev/null 2>&1; then
-                        echo "🛠️ Standalone Python detected"
-                        python3 -m py_compile *.py
+                    fi
+
+                    # 2. Check Java (Standalone)
+                    if ls *.java 1> /dev/null 2>&1; then
+                        echo "🛠️ Compiling Standalone Java files..."
+                        if ! javac *.java; then
+                            echo "❌ Java Compilation Failed"
+                            BUILD_FAILED=1
+                        fi
+                    fi
+
+                    # 3. Check Maven
+                    if [ -f "pom.xml" ]; then
+                        echo "🛠️ Running Maven Build..."
+                        if ! mvn clean compile; then
+                            echo "❌ Maven Build Failed"
+                            BUILD_FAILED=1
+                        fi
+                    fi
+
+                    # 4. Check Gradle
+                    if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+                        echo "🛠️ Running Gradle Build..."
+                        if [ -f "gradlew" ]; then
+                            if ! ./gradlew build; then
+                                echo "❌ Gradle Build Failed"
+                                BUILD_FAILED=1
+                            fi
+                        else
+                            if ! gradle build; then
+                                echo "❌ Gradle Build Failed"
+                                BUILD_FAILED=1
+                            fi
+                        fi
+                    fi
+
+                    # 5. Check npm
+                    if [ -f "package.json" ]; then
+                        echo "🛠️ Running npm Build..."
+                        if ! (npm install && npm run build); then
+                            echo "❌ npm Build Failed"
+                            BUILD_FAILED=1
+                        fi
+                    fi
+
+                    # 6. Check Make
+                    if [ -f "Makefile" ]; then
+                        echo "🛠️ Running Make..."
+                        if ! make; then
+                            echo "❌ Make Failed"
+                            BUILD_FAILED=1
+                        fi
+                    fi
+
+                    # 7. Check Python
+                    if ls *.py 1> /dev/null 2>&1; then
+                        echo "🛠️ Verifying Python Scripts..."
+                        if ! python3 -m py_compile *.py; then
+                            echo "❌ Python Syntax Check Failed"
+                            BUILD_FAILED=1
+                        fi
+                    fi
+
+                    # ==========================================
+                    # FINAL VERDICT
+                    # ==========================================
+                    if [ $BUILD_FAILED -eq 1 ]; then
+                        echo "🚨 Global Scan complete: Failures detected."
+                        exit 1  # This triggers your AI Healer!
                     else
-                        echo "❌ No standard project files found!"
-                        exit 1
+                        echo "✅ Global Scan complete: All systems nominal."
                     fi
                 '''
             }
@@ -57,8 +108,7 @@ pipeline {
             echo "🔥 Build failed! Initiating AI SRE Agent..."
             
             script {
-                // Since 'agent any' is used at the top, we are already in the workspace.
-                // We capture the Git URL so the Python script knows where to push.
+                // Capture the Git URL so the Python script knows where to push.
                 env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
                 
                 sh '''
@@ -74,7 +124,6 @@ pipeline {
                     fi
                     
                     # 3. Trigger Hybrid Healer in unbuffered mode
-                    # Ensure GITHUB_TOKEN is set in Manage Jenkins -> System -> Global Properties
                     ./venv/bin/python3 -u healer.py
                 '''
             }
