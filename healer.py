@@ -17,6 +17,60 @@ BUILD_REGISTRY = {
 # ==========================================
 # UTILITY FUNCTIONS
 # ==========================================
+def get_suspect_list(error_log):
+    """Gathers all files that could possibly be related to the error."""
+    # Find any file mentioned in the log (source files, configs, etc.)
+    files_in_log = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:java|py|js|cpp|h|xml|json|txt))\b', error_log)
+    
+    # Add standard universal configs just in case they are the culprit
+    configs = ["pom.xml", "requirements.txt", "package.json", "Makefile"]
+    
+    # Combine, deduplicate, and only keep files that physically exist in the workspace
+    suspects = list(set([f for f in files_in_log + configs if os.path.exists(f)]))
+    return suspects
+
+def select_target_file(error_log, suspects):
+    """STAGE 0: AI Dispatcher. The AI decides which file is the root cause."""
+    if not suspects:
+        return None
+    if len(suspects) == 1:
+        return suspects[0] # No need to ask AI if there's only one suspect
+
+    url = "http://localhost:11434/api/generate"
+    prompt = f"""You are a Lead SRE. Analyze this build failure and the list of suspect files.
+    
+    ERROR LOG:
+    {error_log}
+    
+    SUSPECT FILES:
+    {suspects}
+    
+    TASK: Which file is the ROOT CAUSE of this error? 
+    - If it's a syntax error, typo, or logic bug, pick the source code file.
+    - If a library/dependency is truly missing or the build configuration is broken, pick the config file (e.g., pom.xml, requirements.txt).
+    
+    RULES:
+    1. Respond ONLY with the exact filename from the SUSPECT FILES list.
+    2. Do not explain your reasoning. Do not use markdown.
+    
+    TARGET FILE:"""
+    
+    try:
+        # Temperature is low (0.1) so it doesn't get creative with filenames
+        res = requests.post(url, json={"model": MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}}, timeout=120)
+        ai_response = res.json().get("response", "").strip()
+        
+        # Safety Check: Ensure the AI's answer is actually in our suspect list
+        for suspect in suspects:
+            if suspect in ai_response:
+                return suspect
+                
+        # Fallback if the AI hallucinates
+        return suspects[0] 
+    except Exception as e:
+        print(f"⚠️ Dispatcher API Error: {e}. Falling back to default target.")
+        return suspects[0]
+
 
 def get_latest_jenkins_log():
     """Fetches the latest Jenkins build log with a 500-line buffer."""
@@ -208,7 +262,7 @@ if __name__ == "__main__":
     # 1. CLASSIFY THE ERROR
     category = classify_error(log_content)
     
-    # 2. DETECT LANGUAGE
+    # 2. DETECT LANGUAGE & CONFIG NAME
     detected_lang = "java" # Default fallback
     if "python" in log_content.lower() or ".py" in log_content:
         detected_lang = "python"
@@ -220,37 +274,27 @@ if __name__ == "__main__":
     config_name = BUILD_REGISTRY[detected_lang]["config"]
     target_file = None
 
-    # 3. DYNAMIC TARGETING (The "Blank Slate" Approach)
-    if category in ["DEPENDENCY", "CONFIG_SYNTAX"]:
+    # 3. AI TARGET DISPATCHER
+    suspects = get_suspect_list(log_content)
+    
+    # Edge Case: The build failed because the config file is missing entirely
+    if category in ["DEPENDENCY", "CONFIG_SYNTAX"] and not os.path.exists(config_name):
+        print(f"📁 NOTICE: {config_name} is missing entirely. Creating an empty file for the AI...")
+        with open(config_name, 'w') as f:
+            f.write("") # Blank slate for the AI to populate
         target_file = config_name
-        if not os.path.exists(target_file):
-            print(f"📁 NOTICE: {target_file} missing. Creating an empty file for the AI to populate...")
-            with open(target_file, 'w') as f:
-                f.write("") # Literally a blank slate
-        else:
-            print(f"🎯 PIVOT: Environment error detected. Targeting: {target_file}")
     else:
-        # SEARCH MODE: Look for the broken source file
-        print("🔍 SEARCHING: Looking for the broken source file...")
-        potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
-        
-        # Make sure we ignore ALL config files from the registry during a code search
-        source_ignore = [info["config"] for info in BUILD_REGISTRY.values()] + ["healer.py", "package-lock.json", "build.gradle"]
-        
-        for file_path in reversed(potential_files):
-            clean_path = file_path.strip()
-            if any(ignored in clean_path for ignored in source_ignore) or "://" in clean_path:
-                continue
-            if os.path.exists(clean_path):
-                target_file = clean_path
-                print(f"🎯 TARGET ACQUIRED: {target_file}")
-                break
+        # Standard flow: Let the AI pick from the existing suspects
+        print(f"🕵️ DISPATCHER: Analyzing suspects: {suspects}")
+        target_file = select_target_file(log_content, suspects)
 
     if not target_file:
-        print("💀 ERROR: Could not identify a target file. Aborting.")
+        print("💀 ERROR: No suspect files found and AI could not identify a target. Aborting.")
         exit(1)
+        
+    print(f"🎯 AI DECISION: Targeting {target_file} for remediation.")
 
-    # Read the content of the target file (might be empty if we just created it!)
+    # Read the content of the target file
     with open(target_file, 'r') as f:
         original_code = f.read()
 
@@ -259,6 +303,7 @@ if __name__ == "__main__":
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
         
+        # STAGE 1: Preliminary Diagnosis
         print("🧠 STAGE 1: Analyzing error and seeking clues...")
         initial_diagnosis = get_diagnosis(original_code, log_content, "")
         
@@ -276,6 +321,7 @@ if __name__ == "__main__":
             print("💀 ERROR: LLM Timeout. Retrying...")
             continue
 
+        # STAGE 2: Code Generation
         print(f"🛠️ STAGE 2: Generating full rewrite for {target_file}...")
         raw_response = get_fixed_code(target_file, original_code, diagnosis_to_use, context)
         
@@ -286,7 +332,7 @@ if __name__ == "__main__":
             with open(target_file, 'w') as f:
                 f.write(fixed_code)
                 
-            # STAGE 3: Verification
+            # STAGE 3: Verification (using the file-specific verification)
             verified, errors = verify_fix(target_file)
             if verified:
                 print(f"✅ SUCCESS: {target_file} fixed and verified!")
