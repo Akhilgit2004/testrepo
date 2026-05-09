@@ -31,29 +31,25 @@ def get_latest_jenkins_log():
         return f"Could not read log: {e}"
 
 def verify_fix(target_file):
-    """Dynamically detects the build system and verifies the code safely."""
-    print(f"🧪 VERIFICATION: Running compiler check on {target_file}...")
-    compile_cmd = []
+    """Verifies the fix based on the SPECIFIC file that was changed."""
+    print(f"🧪 VERIFICATION: Running check for {target_file}...")
     
-    # Logic to pick the right tool
-    if os.path.exists("pom.xml"): 
+    # Base the tool on the target_file, not just file existence
+    if target_file == "pom.xml":
         compile_cmd = ['mvn', 'clean', 'compile']
-    elif target_file.endswith(".java"): 
+    elif target_file == "requirements.txt":
+        # For requirements, 'verification' means checking if pip can parse it
+        compile_cmd = ['./venv/bin/pip', 'install', '--dry-run', '-r', 'requirements.txt']
+    elif target_file.endswith(".java"):
         compile_cmd = ['javac', target_file]
-    elif target_file.endswith(".py"): 
+    elif target_file.endswith(".py"):
         compile_cmd = ['python3', '-m', 'py_compile', target_file]
-    
-    if not compile_cmd: return True, ""
+    else:
+        return True, ""
 
     try:
-        # We use check=False so it doesn't raise an exception on compiler errors
         result = subprocess.run(compile_cmd, capture_output=True, text=True, timeout=300)
         return (result.returncode == 0, result.stderr)
-    except FileNotFoundError:
-        # This catches the 'mvn not found' error specifically
-        error_msg = f"❌ CRITICAL: The build tool '{compile_cmd[0]}' is not installed on this Jenkins server."
-        print(error_msg)
-        return False, error_msg
     except Exception as e:
         return False, str(e)
 
