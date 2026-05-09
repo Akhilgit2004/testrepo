@@ -8,7 +8,12 @@ import re
 # ==========================================
 MODEL = "qwen3:14b"
 MAX_RETRIES = 2
-
+BUILD_REGISTRY = {
+    "java": {"config": "pom.xml", "tool": "mvn", "check": "mvn clean compile"},
+    "python": {"config": "requirements.txt", "tool": "pip", "check": "python3 -m py_compile"},
+    "javascript": {"config": "package.json", "tool": "npm", "check": "npm install && npm run build"},
+    "cpp": {"config": "Makefile", "tool": "make", "check": "make"}
+}
 # ==========================================
 # UTILITY FUNCTIONS
 # ==========================================
@@ -26,20 +31,31 @@ def get_latest_jenkins_log():
         return f"Could not read log: {e}"
 
 def verify_fix(target_file):
-    """Dynamically detects the build system and verifies the code."""
+    """Dynamically detects the build system and verifies the code safely."""
     print(f"🧪 VERIFICATION: Running compiler check on {target_file}...")
     compile_cmd = []
     
-    if os.path.exists("Makefile"): compile_cmd = ['make']
-    elif os.path.exists("pom.xml"): compile_cmd = ['mvn', 'clean', 'compile']
-    elif target_file.endswith(".java"): compile_cmd = ['javac', target_file]
-    elif target_file.endswith(".cpp") or target_file.endswith(".c"): compile_cmd = ['g++', target_file, '-o', 'test_build']
-    elif target_file.endswith(".py"): compile_cmd = ['python3', '-m', 'py_compile', target_file]
+    # Logic to pick the right tool
+    if os.path.exists("pom.xml"): 
+        compile_cmd = ['mvn', 'clean', 'compile']
+    elif target_file.endswith(".java"): 
+        compile_cmd = ['javac', target_file]
+    elif target_file.endswith(".py"): 
+        compile_cmd = ['python3', '-m', 'py_compile', target_file]
     
     if not compile_cmd: return True, ""
 
-    result = subprocess.run(compile_cmd, capture_output=True, text=True)
-    return (result.returncode == 0, result.stderr)
+    try:
+        # We use check=False so it doesn't raise an exception on compiler errors
+        result = subprocess.run(compile_cmd, capture_output=True, text=True, timeout=300)
+        return (result.returncode == 0, result.stderr)
+    except FileNotFoundError:
+        # This catches the 'mvn not found' error specifically
+        error_msg = f"❌ CRITICAL: The build tool '{compile_cmd[0]}' is not installed on this Jenkins server."
+        print(error_msg)
+        return False, error_msg
+    except Exception as e:
+        return False, str(e)
 
 def create_pull_request(explanation, target_file, attempt):
     """Commits code and opens a GitHub Pull Request using GITHUB_TOKEN."""
@@ -161,20 +177,29 @@ def get_supporting_context(target_file, error_log, broken_code):
     return supporting_data
 
 def classify_error(error_log):
-    """Uses Regex to reliably detect environment/dependency errors."""
-    # Java: Matches 'package com.foo.bar does not exist' or missing symbols
-    if re.search(r"package [\w.]+ does not exist", error_log) or "symbol: class" in error_log:
-        return "DEPENDENCY", "pom.xml"
+    """Detects what KIND of error it is, across any language."""
+    # Dependency missing patterns (Universal)
+    dep_patterns = [
+        r"package [\w.]+ does not exist",  # Java
+        r"ModuleNotFoundError",            # Python
+        r"Cannot find module",             # JS
+        r"fatal error: .* No such file"    # C++
+    ]
     
-    # Python: Matches 'ModuleNotFoundError'
-    if "ModuleNotFoundError" in error_log or "No module named" in error_log:
-        return "DEPENDENCY", "requirements.txt"
-    
-    # NPM: Matches missing packages
-    if "npm ERR!" in error_log and "missing" in error_log:
-        return "DEPENDENCY", "package.json"
+    # Config file syntax patterns (Universal)
+    config_patterns = [
+        r"ProjectBuildingException",       # Maven
+        r"Invalid control character",      # JSON/package.json
+        r"SyntaxError in",                 # Requirements/Make
+        r"missing.*'[\w.]+'"               # General missing fields
+    ]
+
+    for pattern in dep_patterns:
+        if re.search(pattern, error_log): return "DEPENDENCY"
+    for pattern in config_patterns:
+        if re.search(pattern, error_log): return "CONFIG_SYNTAX"
         
-    return "CODE", None
+    return "CODE"
 # ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
@@ -184,28 +209,37 @@ if __name__ == "__main__":
     
     log_content = get_latest_jenkins_log()
     
-    # 1. CLASSIFY THE ERROR & DYNAMIC TARGETING
-    error_type, config_file = classify_error(log_content)
+    # 1. CLASSIFY THE ERROR
+    category = classify_error(log_content)
+    
+    # 2. DETECT LANGUAGE
+    detected_lang = "java" # Default fallback
+    if "python" in log_content.lower() or ".py" in log_content:
+        detected_lang = "python"
+    elif "npm" in log_content.lower() or "node" in log_content.lower() or ".js" in log_content:
+        detected_lang = "javascript"
+    elif "g++" in log_content.lower() or "gcc" in log_content.lower() or ".cpp" in log_content:
+        detected_lang = "cpp"
+        
+    config_name = BUILD_REGISTRY[detected_lang]["config"]
     target_file = None
 
-    if error_type == "DEPENDENCY":
-        if os.path.exists(config_file):
-            target_file = config_file
-            print(f"🎯 PIVOT: Dependency error detected. Directly targeting: {target_file}")
+    # 3. DYNAMIC TARGETING (The "Blank Slate" Approach)
+    if category in ["DEPENDENCY", "CONFIG_SYNTAX"]:
+        target_file = config_name
+        if not os.path.exists(target_file):
+            print(f"📁 NOTICE: {target_file} missing. Creating an empty file for the AI to populate...")
+            with open(target_file, 'w') as f:
+                f.write("") # Literally a blank slate
         else:
-            # If the config file is missing entirely, we create a skeleton for the AI
-            print(f"📁 NOTICE: {config_file} missing. Creating a skeleton file for the AI...")
-            with open(config_file, 'w') as f:
-                if config_file == "pom.xml":
-                    f.write('<?xml version="1.0" encoding="UTF-8"?>\n<project xmlns="http://maven.apache.org/POM/4.0.0">\n    <modelVersion>4.0.0</modelVersion>\n    <dependencies></dependencies>\n</project>')
-                else:
-                    f.write("# Auto-generated Requirements File\n")
-            target_file = config_file
+            print(f"🎯 PIVOT: Environment error detected. Targeting: {target_file}")
     else:
-        # SEARCH MODE: Look for the broken source file using our ignore list
+        # SEARCH MODE: Look for the broken source file
         print("🔍 SEARCHING: Looking for the broken source file...")
         potential_files = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:cpp|py|java|js|c|h))\b', str(log_content))
-        source_ignore = ["package.json", "package-lock.json", "pom.xml", "Makefile", "build.gradle", "healer.py"]
+        
+        # Make sure we ignore ALL config files from the registry during a code search
+        source_ignore = [info["config"] for info in BUILD_REGISTRY.values()] + ["healer.py", "package-lock.json", "build.gradle"]
         
         for file_path in reversed(potential_files):
             clean_path = file_path.strip()
@@ -220,19 +254,19 @@ if __name__ == "__main__":
         print("💀 ERROR: Could not identify a target file. Aborting.")
         exit(1)
 
-    # Read the content of the target file (whether it's code or pom.xml)
+    # Read the content of the target file (might be empty if we just created it!)
     with open(target_file, 'r') as f:
         original_code = f.read()
 
+    # 4. REMEDIATION LOOP
     success = False
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
         
-        # STAGE 1: Preliminary Diagnosis
         print("🧠 STAGE 1: Analyzing error and seeking clues...")
         initial_diagnosis = get_diagnosis(original_code, log_content, "")
         
-        # JIT Context Fetching (Surgical Search)
+        # JIT Context Fetching (Passes diagnosis as the search key)
         context = get_supporting_context(target_file, initial_diagnosis, original_code)
         diagnosis_to_use = initial_diagnosis
         
@@ -246,7 +280,6 @@ if __name__ == "__main__":
             print("💀 ERROR: LLM Timeout. Retrying...")
             continue
 
-        # STAGE 2: Remediation
         print(f"🛠️ STAGE 2: Generating full rewrite for {target_file}...")
         raw_response = get_fixed_code(target_file, original_code, diagnosis_to_use, context)
         
@@ -257,7 +290,7 @@ if __name__ == "__main__":
             with open(target_file, 'w') as f:
                 f.write(fixed_code)
                 
-            # STAGE 3: Verification (Runs Maven/Javac/etc based on file type)
+            # STAGE 3: Verification
             verified, errors = verify_fix(target_file)
             if verified:
                 print(f"✅ SUCCESS: {target_file} fixed and verified!")
