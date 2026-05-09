@@ -60,7 +60,7 @@ def select_target_file(error_log, suspects):
     
     try:
         # Temperature is low (0.1) so it doesn't get creative with filenames
-        res = requests.post(url, json={"model": MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}}, timeout=120)
+        res = requests.post(url, json={"model": MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}}, timeout=300)
         ai_response = res.json().get("response", "").strip()
         
         # Safety Check: Ensure the AI's answer is actually in our suspect list
@@ -207,7 +207,7 @@ def get_diagnosis(file_content, error_log, supporting_context=""):
     DIAGNOSIS:"""
     
     try:
-        res = requests.post(url, json={"model": MODEL, "prompt": prompt, "stream": False}, timeout=120)
+        res = requests.post(url, json={"model": MODEL, "prompt": prompt, "stream": False}, timeout=300)
         return res.json().get("response", "Could not generate diagnosis.")
     except Exception as e:
         return f"API Error: {e}"
