@@ -1,3 +1,5 @@
 fastapi
 uvicorn
 requests
+chromadb
+sentence-transformers

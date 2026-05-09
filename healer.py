@@ -4,6 +4,8 @@ import subprocess
 import re
 import json
 import time
+import chromadb
+from chromadb.utils import embedding_functions
 # ==========================================
 # CONFIGURATION
 # ==========================================
@@ -239,7 +241,46 @@ def get_fixed_code(target_file, file_content, diagnosis,supporting_context):
         return res.json().get("response", "")
     except Exception as e:
         return ""
-    
+
+class VectorMemory:
+    def __init__(self, db_path="./agent_memory"):
+        # Initialize the local database
+        self.client = chromadb.PersistentClient(path=db_path)
+        
+        # Use a lightweight, local embedding function (no API cost)
+        self.embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2"
+        )
+        
+        # Create or load the 'experience' collection
+        self.collection = self.client.get_or_create_collection(
+            name="fix_history", 
+            embedding_function=self.embed_fn
+        )
+
+    def learn(self, error_log, target_file, remedy):
+        """Stores a successful fix in the vector store."""
+        doc_id = f"id_{int(time.time())}"
+        self.collection.add(
+            ids=[doc_id],
+            documents=[error_log[:500]],
+            metadatas=[{"target_file": target_file, "remedy": remedy}]
+        )
+        print(f"🧠 MEMORY: Learned a new fix for {target_file}.")
+
+    def recall(self, current_error):
+        """Searches for semantically similar errors."""
+        results = self.collection.query(
+            query_texts=[current_error[:500]],
+            n_results=1
+        )
+        
+        if results['distances'] and results['distances'][0][0] < 0.4:
+            match = results['metadatas'][0][0]
+            return match['remedy']
+        
+        return None
+       
 def get_supporting_context(target_file, error_log, broken_code):
     """Physically crawls the workspace to find ANY file mentioned in the error."""
     print("🕵️ SEARCHING: Agent is hunting for related files in the directory...")
@@ -306,6 +347,9 @@ if __name__ == "__main__":
     print("\n" + "="*50)
     print("🚨 HYBRID HEALER AGENT: INITIATING RECOVERY...")
     
+    # 0. Initialize Vector Knowledge Base
+    memory = VectorMemory()
+    
     log_content = get_latest_jenkins_log()
     
     # 1. CLASSIFY THE ERROR
@@ -352,17 +396,26 @@ if __name__ == "__main__":
     for attempt in range(1, MAX_RETRIES + 1):
         print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
         
-        # STAGE 1: Preliminary Diagnosis
-        print("🧠 STAGE 1: Analyzing error and seeking clues...")
-        initial_diagnosis = get_diagnosis(original_code, log_content, "")
+        # --- MEMORY CHECK ---
+        print("🔍 MEMORY: Searching for similar past experiences...")
+        past_remedy = memory.recall(log_content)
         
-        # JIT Context Fetching (Passes diagnosis as the search key)
-        context = get_supporting_context(target_file, initial_diagnosis, original_code)
-        diagnosis_to_use = initial_diagnosis
-        
-        if context:
-            print("🧠 STAGE 1.5: Refining diagnosis with discovered context...")
-            diagnosis_to_use = get_diagnosis(original_code, log_content, context)
+        if past_remedy:
+            print("💡 EUREKA: I found a highly similar error in my history!")
+            diagnosis_to_use = f"RECALLED REMEDY: {past_remedy}"
+            context = "" # Skip context fetching if we already know the answer
+        else:
+            # STAGE 1: Preliminary Diagnosis from scratch
+            print("🧠 STAGE 1: No memory found. Analyzing error from scratch...")
+            initial_diagnosis = get_diagnosis(original_code, log_content, "")
+            
+            # JIT Context Fetching (Passes diagnosis as the search key)
+            context = get_supporting_context(target_file, initial_diagnosis, original_code)
+            diagnosis_to_use = initial_diagnosis
+            
+            if context:
+                print("🧠 STAGE 1.5: Refining diagnosis with discovered context...")
+                diagnosis_to_use = get_diagnosis(original_code, log_content, context)
         
         print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis_to_use}\n")
 
@@ -386,10 +439,14 @@ if __name__ == "__main__":
             if verified:
                 print(f"✅ SUCCESS: {target_file} fixed and verified!")
                 
-                # 1. Push the code
+                # 1. Commit to Long-Term Memory!
+                if not past_remedy:
+                    memory.learn(log_content, target_file, diagnosis_to_use)
+                
+                # 2. Push the code
                 create_pull_request(diagnosis_to_use, target_file, attempt)
                 
-                # 2. Tell the team via Slack/Discord Webhook!
+                # 3. Tell the team via Slack/Discord Webhook
                 notify_team(target_file, diagnosis_to_use, attempt)
                 
                 success = True
