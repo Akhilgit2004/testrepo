@@ -13,7 +13,7 @@ struct ServerNode {
     std::string hostname;
     std::string status;
     double cpu_usage;
-    double ram_usage;
+    double ram_usage
 } 
 
 // ==========================================
@@ -42,7 +42,7 @@ public:
 class ServerFleetManager {
 private:
     std::vector<ServerNode> fleet;
-    DatabaseConnector db;
+    DatabaseConnector db
 
 public:
     ServerFleetManager() {

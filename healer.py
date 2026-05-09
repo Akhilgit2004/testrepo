@@ -2,7 +2,8 @@ import os
 import requests
 import subprocess
 import re
-
+import json
+import time
 # ==========================================
 # CONFIGURATION
 # ==========================================
@@ -133,6 +134,54 @@ def create_pull_request(explanation, target_file, attempt):
     except Exception as e:
         print(f"❌ Git Error: {e}")
         return False
+    
+
+WEBHOOK_URL="https://discord.com/api/webhooks/1502582315354689578/sZDegYsairWMZrCuLrLsEHI0UAm3QAbTzZpmvtSKDIw1vYT2_Ww9_AOSefLciug3px3R/slack"
+def notify_team(target_file, diagnosis, attempt):
+    """Sends a formatted summary of the fix to the team's chat channel."""
+    if not WEBHOOK_URL or "XXXXXXXXXXXXXXXX" in WEBHOOK_URL:
+        print("⚠️ CHATOPS: No valid Webhook URL configured. Skipping notification.")
+        return
+
+    print(f"📢 CHATOPS: Broadcasting fix for {target_file} to the team...")
+    
+    # Extract just the first few lines of the AI's diagnosis to keep the chat clean
+    summary_lines = diagnosis.strip().split('\n')[:3]
+    short_summary = " ".join(summary_lines).replace('*', '').replace('#', '') + "..."
+
+    payload = {
+        "text": "🚨 *Hybrid Healer Agent Intervention*",
+        "attachments": [
+            {
+                "color": "#36a64f", # Green for successful fix
+                "title": f"🛠️ Successfully patched {target_file}",
+                "text": f"*{short_summary}*",
+                "fields": [
+                    {
+                        "title": "Status",
+                        "value": "✅ Compiled & Verified",
+                        "short": True
+                    },
+                    {
+                        "title": "Attempts Needed",
+                        "value": f"{attempt}/{MAX_RETRIES}",
+                        "short": True
+                    }
+                ],
+                "footer": "Hybrid Healer AI",
+                "ts": int(time.time())
+            }
+        ]
+    }
+
+    try:
+        response = requests.post(WEBHOOK_URL, data=json.dumps(payload), headers={'Content-Type': 'application/json'}, timeout=10)
+        if response.status_code in [200, 204]:
+            print("✅ CHATOPS: Notification delivered successfully!")
+        else:
+            print(f"⚠️ CHATOPS: Failed to send notification. HTTP {response.status_code}")
+    except Exception as e:
+        print(f"⚠️ CHATOPS: Error sending notification: {e}")   
 
 # ==========================================
 # AI AGENT FUNCTIONS
@@ -336,7 +385,13 @@ if __name__ == "__main__":
             verified, errors = verify_fix(target_file)
             if verified:
                 print(f"✅ SUCCESS: {target_file} fixed and verified!")
+                
+                # 1. Push the code
                 create_pull_request(diagnosis_to_use, target_file, attempt)
+                
+                # 2. Tell the team via Slack/Discord Webhook!
+                notify_team(target_file, diagnosis_to_use, attempt)
+                
                 success = True
                 break
             else:
