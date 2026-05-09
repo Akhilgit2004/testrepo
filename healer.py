@@ -269,15 +269,27 @@ class VectorMemory:
         print(f"🧠 MEMORY: Learned a new fix for {target_file}.")
 
     def recall(self, current_error):
-        """Searches for semantically similar errors."""
+        """Searches for semantically similar errors with safety checks."""
+        # Query the database
         results = self.collection.query(
             query_texts=[current_error[:500]],
             n_results=1
         )
         
-        if results['distances'] and results['distances'][0][0] < 0.4:
-            match = results['metadatas'][0][0]
-            return match['remedy']
+        # Check if we actually got a result back
+        # results['ids'][0] will be empty [] if no matches are found
+        if not results or not results['ids'] or not results['ids'][0]:
+            print("🧠 MEMORY: No previous experience found (Database might be empty).")
+            return None
+        
+        # Now it is safe to check the distance
+        try:
+            distance = results['distances'][0][0]
+            if distance < 0.4:
+                match = results['metadatas'][0][0]
+                return match['remedy']
+        except (IndexError, TypeError):
+            return None
         
         return None
        
