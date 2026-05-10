@@ -245,47 +245,56 @@ def get_fixed_code(target_file, file_content, diagnosis,supporting_context):
     except Exception as e:
         return ""
 
+def extract_error_snippet(log_text, target_filename):
+    """Extracts only the log lines relevant to the specific broken file."""
+    lines = log_text.split('\n')
+    snippet_lines = []
+    
+    for i, line in enumerate(lines):
+        if target_filename in line:
+            # Grab the line with the filename, plus a few lines of context around it
+            start = max(0, i - 2)
+            end = min(len(lines), i + 5)
+            snippet_lines.extend(lines[start:end])
+            
+    if snippet_lines:
+        return "\n".join(snippet_lines)[:500] # Keep it within 500 chars for the Vector DB
+    
+    return log_text[:500]
+
 class VectorMemory:
     def __init__(self, db_path="./agent_memory"):
-        # Initialize the local database
         self.client = chromadb.PersistentClient(path=db_path)
-        
-        # Use a lightweight, local embedding function (no API cost)
         self.embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2"
+            model_name="all-MiniLM-L6-v2" # Or your local path if you downloaded it!
         )
-        
-        # Create or load the 'experience' collection
         self.collection = self.client.get_or_create_collection(
             name="fix_history", 
             embedding_function=self.embed_fn
         )
 
-    def learn(self, error_log, target_file, remedy):
-        """Stores a successful fix in the vector store."""
+    def learn(self, error_snippet, target_file, remedy, lang):
+        """Stores a fix with a Language metadata tag."""
         doc_id = f"id_{int(time.time())}"
         self.collection.add(
             ids=[doc_id],
-            documents=[error_log[:500]],
-            metadatas=[{"target_file": target_file, "remedy": remedy}]
+            documents=[error_snippet],
+            metadatas=[{"target_file": target_file, "remedy": remedy, "lang": lang}] # Added lang!
         )
-        print(f"🧠 MEMORY: Learned a new fix for {target_file}.")
+        print(f"🧠 MEMORY: Learned a new {lang} fix for {target_file}.")
 
-    def recall(self, current_error):
-        """Searches for semantically similar errors with safety checks."""
-        # Query the database
+    def recall(self, error_snippet, lang):
+        """Searches memory, strictly filtered by language."""
         results = self.collection.query(
-            query_texts=[current_error[:500]],
-            n_results=1
+            query_texts=[error_snippet],
+            n_results=1,
+            where={"lang": lang} # THE LANGUAGE WALL: Ignore other languages!
         )
         
-        # Check if we actually got a result back
-        # results['ids'][0] will be empty [] if no matches are found
         if not results or not results['ids'] or not results['ids'][0]:
-            print("🧠 MEMORY: No previous experience found (Database might be empty).")
+            print(f"🧠 MEMORY: No previous {lang} experience found.")
             return None
         
-        # Now it is safe to check the distance
         try:
             distance = results['distances'][0][0]
             if distance < 0.4:
@@ -362,94 +371,72 @@ if __name__ == "__main__":
     print("\n" + "="*50)
     print("🚨 HYBRID HEALER AGENT: INITIATING GLOBAL SWEEP...")
     
-    # 0. Initialize Vector Knowledge Base
     memory = VectorMemory()
     patched_files = []
-    
-    # We allow the agent to run multiple rounds to fix interconnected errors,
-    # but we cap it at 5 so it doesn't get stuck in an infinite loop.
     max_global_rounds = 5 
+    
+    # We fetch the log ONCE outside the loop, and scrub it down as we fix things
+    master_log_content = get_latest_jenkins_log()
     
     for round_num in range(1, max_global_rounds + 1):
         print(f"\n🌐 GLOBAL REPAIR ROUND {round_num}/{max_global_rounds}")
         
-        # Always fetch a fresh log at the start of the round
-        log_content = get_latest_jenkins_log()
-        
         # 1. CLASSIFY THE ERROR
-        category = classify_error(log_content)
+        category = classify_error(master_log_content)
         
-        # 2. DETECT LANGUAGE & CONFIG NAME
-        detected_lang = "java" # Default fallback
-        if "python" in log_content.lower() or ".py" in log_content:
-            detected_lang = "python"
-        elif "npm" in log_content.lower() or "node" in log_content.lower() or ".js" in log_content:
-            detected_lang = "javascript"
-        elif "g++" in log_content.lower() or "gcc" in log_content.lower() or ".cpp" in log_content:
-            detected_lang = "cpp"
-            
-        config_name = BUILD_REGISTRY[detected_lang]["config"]
-        target_file = None
-
-        # 3. GET SUSPECTS
-        all_suspects = get_suspect_list(log_content)
-        
-        # FILTER: Remove files we've already patched in this session to prevent loops
+        # 2. GET SUSPECTS
+        all_suspects = get_suspect_list(master_log_content)
         suspects = [f for f in all_suspects if f not in patched_files]
         
         if not suspects:
-            if round_num == 1:
-                print("✅ No suspects found. The build might already be clean!")
-            else:
-                print("✅ GLOBAL SWEEP COMPLETE: All unpatched errors have been handled!")
-            break # Exit the global loop entirely
-        
-        # Edge Case: The build failed because the config file is missing entirely
-        if category in ["DEPENDENCY", "CONFIG_SYNTAX"] and not os.path.exists(config_name):
-            print(f"📁 NOTICE: {config_name} is missing entirely. Creating an empty file for the AI...")
-            with open(config_name, 'w') as f:
-                f.write("") # Blank slate for the AI to populate
-            target_file = config_name
-        else:
-            # Standard flow: Let the AI pick the primary culprit for this round
-            print(f"🕵️ DISPATCHER: Analyzing suspects: {suspects}")
-            target_file = select_target_file(log_content, suspects)
+            print("✅ GLOBAL SWEEP COMPLETE: All unpatched errors have been handled!")
+            break 
+            
+        # Dispatcher picks the target
+        print(f"🕵️ DISPATCHER: Analyzing suspects: {suspects}")
+        target_file = select_target_file(master_log_content, suspects)
 
-        if not target_file or target_file not in suspects + [config_name]:
-            print(f"💀 ERROR: AI picked an invalid target or no target. Halting sweep.")
+        if not target_file or target_file not in suspects:
+            print(f"💀 ERROR: AI picked an invalid target. Halting sweep.")
             break
             
-        print(f"🎯 ROUND {round_num}: Targeting {target_file} for remediation.")
+        # 3. DETECT TARGET LANGUAGE
+        detected_lang = "java" 
+        if ".py" in target_file: detected_lang = "python"
+        elif ".js" in target_file or "package.json" in target_file: detected_lang = "javascript"
+        elif ".cpp" in target_file or ".h" in target_file: detected_lang = "cpp"
+            
+        print(f"🎯 ROUND {round_num}: Targeting {target_file} ({detected_lang})")
 
-        # Read the content of the target file
         with open(target_file, 'r') as f:
             original_code = f.read()
+            
+        # Extract the Surgical Fingerprint for this specific file
+        file_specific_error = extract_error_snippet(master_log_content, target_file)
 
-        # 4. REMEDIATION LOOP (For this specific target file)
+        # 4. REMEDIATION LOOP
         file_fixed = False
         for attempt in range(1, MAX_RETRIES + 1):
             print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES} for {target_file}...")
             
-            # --- MEMORY CHECK ---
+            # --- MEMORY CHECK (Now uses Surgical Error & Language Wall) ---
             print("🔍 MEMORY: Searching for similar past experiences...")
-            past_remedy = memory.recall(log_content)
+            past_remedy = memory.recall(file_specific_error, detected_lang)
             
             if past_remedy:
                 print("💡 EUREKA: I found a highly similar error in my history!")
                 diagnosis_to_use = f"RECALLED REMEDY: {past_remedy}"
-                context = "" # Skip context fetching if we already know the answer
+                context = "" 
             else:
-                # STAGE 1: Preliminary Diagnosis from scratch
-                print("🧠 STAGE 1: No memory found. Analyzing error from scratch...")
-                initial_diagnosis = get_diagnosis(original_code, log_content, "")
-                
-                # JIT Context Fetching
+                print("🧠 STAGE 1: Analyzing error from scratch...")
+                # We pass the targeted error snippet to the AI so it doesn't get confused by other logs
+                initial_diagnosis = get_diagnosis(original_code, file_specific_error, "")
                 context = get_supporting_context(target_file, initial_diagnosis, original_code)
                 diagnosis_to_use = initial_diagnosis
                 
                 if context:
                     print("🧠 STAGE 1.5: Refining diagnosis with discovered context...")
-                    diagnosis_to_use = get_diagnosis(original_code, log_content, context)
+                    diagnosis_to_use = get_diagnosis(original_code, file_specific_error, context)
             
             print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis_to_use}\n")
 
@@ -460,7 +447,6 @@ if __name__ == "__main__":
             # STAGE 2: Code Generation
             print(f"🛠️ STAGE 2: Generating full rewrite for {target_file}...")
             raw_response = get_fixed_code(target_file, original_code, diagnosis_to_use, context)
-            
             code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
             
             if code_block_match:
@@ -472,37 +458,38 @@ if __name__ == "__main__":
                 verified, errors = verify_fix(target_file)
                 if verified:
                     print(f"✅ SUCCESS: {target_file} fixed and verified!")
-                    
-                    # Mark as patched to avoid the Stale Log Trap
                     patched_files.append(target_file)
                     
-                    # 1. Commit to Long-Term Memory!
+                    # Learn the new fix (Now includes language!)
                     if not past_remedy:
-                        memory.learn(log_content, target_file, diagnosis_to_use)
+                        memory.learn(file_specific_error, target_file, diagnosis_to_use, detected_lang)
                     
-                    # 2. Push the code
                     create_pull_request(diagnosis_to_use, target_file, attempt)
+                    notify_team(target_file, "Partial fix applied...", round_num)
                     
-                    # 3. Tell the team via Slack/Discord Webhook
-                    notify_team(target_file, "Partial fix applied, moving to next error...", round_num)
+                    # --- THE LOG SCRUBBER ---
+                    # Remove any line from the master log that mentions the file we just fixed
+                    print(f"🧹 SCRUBBER: Removing {target_file} errors from log for next round.")
+                    scrubbed_lines = [line for line in master_log_content.split('\n') if target_file not in line]
+                    master_log_content = "\n".join(scrubbed_lines)
                     
                     file_fixed = True
                     break
                 else:
                     print(f"❌ FAIL: Fix did not compile. Compiler said:\n{errors}")
+                    # Update the error snippet to include the NEW failure for the next attempt
+                    file_specific_error = errors 
                     with open(target_file, 'w') as f:
-                        f.write(original_code) # Revert for next try
+                        f.write(original_code) 
             else:
                 print("❌ ERROR: AI failed to provide a valid code block.")
 
-        # Evaluate the round
         if file_fixed:
-            print(f"✔️ {target_file} patched. Looping back for a fresh scan...")
-            continue # Goes to the next round of the Global Loop!
+            print(f"✔️ {target_file} patched. Looping back...")
+            continue 
         else:
-            print(f"⚠️ Could not fix {target_file} after {MAX_RETRIES} attempts.")
-            print("💀 Halting the Global Sweep. Human intervention required.")
-            break # Exit the global loop
+            print(f"⚠️ Could not fix {target_file}. Halting sweep.")
+            break 
 
     print("\n" + "="*50)
     print("🏁 HYBRID HEALER AGENT: SWEEP PROTOCOL CONCLUDED.")
