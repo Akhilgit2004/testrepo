@@ -252,7 +252,7 @@ class VectorMemory:
         
         # Use a lightweight, local embedding function (no API cost)
         self.embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2"
+            model_name="all-MiniLM-L6-v2",token="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"
         )
         
         # Create or load the 'experience' collection
@@ -364,6 +364,7 @@ if __name__ == "__main__":
     
     # 0. Initialize Vector Knowledge Base
     memory = VectorMemory()
+    patched_files = []
     
     # We allow the agent to run multiple rounds to fix interconnected errors,
     # but we cap it at 5 so it doesn't get stuck in an infinite loop.
@@ -391,13 +392,16 @@ if __name__ == "__main__":
         target_file = None
 
         # 3. GET SUSPECTS
-        suspects = get_suspect_list(log_content)
+        all_suspects = get_suspect_list(log_content)
+        
+        # FILTER: Remove files we've already patched in this session to prevent loops
+        suspects = [f for f in all_suspects if f not in patched_files]
         
         if not suspects:
             if round_num == 1:
                 print("✅ No suspects found. The build might already be clean!")
             else:
-                print("✅ GLOBAL SWEEP COMPLETE: All known errors have been patched!")
+                print("✅ GLOBAL SWEEP COMPLETE: All unpatched errors have been handled!")
             break # Exit the global loop entirely
         
         # Edge Case: The build failed because the config file is missing entirely
@@ -468,6 +472,9 @@ if __name__ == "__main__":
                 verified, errors = verify_fix(target_file)
                 if verified:
                     print(f"✅ SUCCESS: {target_file} fixed and verified!")
+                    
+                    # Mark as patched to avoid the Stale Log Trap
+                    patched_files.append(target_file)
                     
                     # 1. Commit to Long-Term Memory!
                     if not past_remedy:
