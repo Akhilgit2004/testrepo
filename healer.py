@@ -22,14 +22,18 @@ BUILD_REGISTRY = {
 # ==========================================
 def get_suspect_list(error_log):
     """Gathers all files that could possibly be related to the error."""
-    # Find any file mentioned in the log (source files, configs, etc.)
+    # 1. Find any file mentioned in the log
     files_in_log = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:java|py|js|cpp|h|xml|json|txt))\b', error_log)
     
-    # Add standard universal configs just in case they are the culprit
     configs = ["pom.xml", "requirements.txt", "package.json", "Makefile"]
     
-    # Combine, deduplicate, and only keep files that physically exist in the workspace
-    suspects = list(set([f for f in files_in_log + configs if os.path.exists(f)]))
+    # 2. FILTER: Remove 'healer.py' and any other non-project files
+    # We use a list comprehension to build the list while ignoring the agent itself
+    suspects = [
+        f for f in set(files_in_log + configs) 
+        if os.path.exists(f) and f != "healer.py" and not f.startswith("venv/")
+    ]
+    
     return suspects
 
 def select_target_file(error_log, suspects):
@@ -49,15 +53,14 @@ def select_target_file(error_log, suspects):
     {suspects}
     
     TASK: Which file is the ROOT CAUSE of this error? 
-    - If it's a syntax error, typo, or logic bug, pick the source code file.
-    - If a library/dependency is truly missing or the build configuration is broken, pick the config file (e.g., pom.xml, requirements.txt).
+    - NEVER pick a file that is not in the SUSPECT FILES list.
+    - If there are multiple errors in different languages, pick the one that appeared FIRST in the log.
     
     RULES:
-    1. Respond ONLY with the exact filename from the SUSPECT FILES list.
-    2. Do not explain your reasoning. Do not use markdown.
+    1. Respond ONLY with the exact filename.
+    2. Do not explain your reasoning.
     
     TARGET FILE:"""
-    
     try:
         # Temperature is low (0.1) so it doesn't get creative with filenames
         res = requests.post(url, json={"model": MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}}, timeout=300)
