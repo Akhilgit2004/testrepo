@@ -1,6 +1,6 @@
 #include <iostream>
 #include <vector>
-// The agent should realize #include <numeric> is missing here
+#include <numeric>  // Required for std::accumulate
 
 int main() {
     std::vector<int> nums = {1, 2, 3, 4, 5};
