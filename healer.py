@@ -252,7 +252,7 @@ class VectorMemory:
         
         # Use a lightweight, local embedding function (no API cost)
         self.embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name="all-MiniLM-L6-v2",token="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"
+            model_name="all-MiniLM-L6-v2"
         )
         
         # Create or load the 'experience' collection
