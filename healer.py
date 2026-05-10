@@ -360,119 +360,142 @@ def classify_error(error_log):
 # ==========================================
 if __name__ == "__main__":
     print("\n" + "="*50)
-    print("🚨 HYBRID HEALER AGENT: INITIATING RECOVERY...")
+    print("🚨 HYBRID HEALER AGENT: INITIATING GLOBAL SWEEP...")
     
     # 0. Initialize Vector Knowledge Base
     memory = VectorMemory()
     
-    log_content = get_latest_jenkins_log()
+    # We allow the agent to run multiple rounds to fix interconnected errors,
+    # but we cap it at 5 so it doesn't get stuck in an infinite loop.
+    max_global_rounds = 5 
     
-    # 1. CLASSIFY THE ERROR
-    category = classify_error(log_content)
-    
-    # 2. DETECT LANGUAGE & CONFIG NAME
-    detected_lang = "java" # Default fallback
-    if "python" in log_content.lower() or ".py" in log_content:
-        detected_lang = "python"
-    elif "npm" in log_content.lower() or "node" in log_content.lower() or ".js" in log_content:
-        detected_lang = "javascript"
-    elif "g++" in log_content.lower() or "gcc" in log_content.lower() or ".cpp" in log_content:
-        detected_lang = "cpp"
+    for round_num in range(1, max_global_rounds + 1):
+        print(f"\n🌐 GLOBAL REPAIR ROUND {round_num}/{max_global_rounds}")
         
-    config_name = BUILD_REGISTRY[detected_lang]["config"]
-    target_file = None
-
-    # 3. AI TARGET DISPATCHER
-    suspects = get_suspect_list(log_content)
-    
-    # Edge Case: The build failed because the config file is missing entirely
-    if category in ["DEPENDENCY", "CONFIG_SYNTAX"] and not os.path.exists(config_name):
-        print(f"📁 NOTICE: {config_name} is missing entirely. Creating an empty file for the AI...")
-        with open(config_name, 'w') as f:
-            f.write("") # Blank slate for the AI to populate
-        target_file = config_name
-    else:
-        # Standard flow: Let the AI pick from the existing suspects
-        print(f"🕵️ DISPATCHER: Analyzing suspects: {suspects}")
-        target_file = select_target_file(log_content, suspects)
-
-    if not target_file:
-        print("💀 ERROR: No suspect files found and AI could not identify a target. Aborting.")
-        exit(1)
+        # Always fetch a fresh log at the start of the round
+        log_content = get_latest_jenkins_log()
         
-    print(f"🎯 AI DECISION: Targeting {target_file} for remediation.")
-
-    # Read the content of the target file
-    with open(target_file, 'r') as f:
-        original_code = f.read()
-
-    # 4. REMEDIATION LOOP
-    success = False
-    for attempt in range(1, MAX_RETRIES + 1):
-        print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES}...")
+        # 1. CLASSIFY THE ERROR
+        category = classify_error(log_content)
         
-        # --- MEMORY CHECK ---
-        print("🔍 MEMORY: Searching for similar past experiences...")
-        past_remedy = memory.recall(log_content)
-        
-        if past_remedy:
-            print("💡 EUREKA: I found a highly similar error in my history!")
-            diagnosis_to_use = f"RECALLED REMEDY: {past_remedy}"
-            context = "" # Skip context fetching if we already know the answer
-        else:
-            # STAGE 1: Preliminary Diagnosis from scratch
-            print("🧠 STAGE 1: No memory found. Analyzing error from scratch...")
-            initial_diagnosis = get_diagnosis(original_code, log_content, "")
+        # 2. DETECT LANGUAGE & CONFIG NAME
+        detected_lang = "java" # Default fallback
+        if "python" in log_content.lower() or ".py" in log_content:
+            detected_lang = "python"
+        elif "npm" in log_content.lower() or "node" in log_content.lower() or ".js" in log_content:
+            detected_lang = "javascript"
+        elif "g++" in log_content.lower() or "gcc" in log_content.lower() or ".cpp" in log_content:
+            detected_lang = "cpp"
             
-            # JIT Context Fetching (Passes diagnosis as the search key)
-            context = get_supporting_context(target_file, initial_diagnosis, original_code)
-            diagnosis_to_use = initial_diagnosis
-            
-            if context:
-                print("🧠 STAGE 1.5: Refining diagnosis with discovered context...")
-                diagnosis_to_use = get_diagnosis(original_code, log_content, context)
-        
-        print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis_to_use}\n")
+        config_name = BUILD_REGISTRY[detected_lang]["config"]
+        target_file = None
 
-        if "API Error:" in diagnosis_to_use:
-            print("💀 ERROR: LLM Timeout. Retrying...")
-            continue
-
-        # STAGE 2: Code Generation
-        print(f"🛠️ STAGE 2: Generating full rewrite for {target_file}...")
-        raw_response = get_fixed_code(target_file, original_code, diagnosis_to_use, context)
+        # 3. GET SUSPECTS
+        suspects = get_suspect_list(log_content)
         
-        code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
-        
-        if code_block_match:
-            fixed_code = code_block_match.group(1).strip()
-            with open(target_file, 'w') as f:
-                f.write(fixed_code)
-                
-            # STAGE 3: Verification (using the file-specific verification)
-            verified, errors = verify_fix(target_file)
-            if verified:
-                print(f"✅ SUCCESS: {target_file} fixed and verified!")
-                
-                # 1. Commit to Long-Term Memory!
-                if not past_remedy:
-                    memory.learn(log_content, target_file, diagnosis_to_use)
-                
-                # 2. Push the code
-                create_pull_request(diagnosis_to_use, target_file, attempt)
-                
-                # 3. Tell the team via Slack/Discord Webhook
-                notify_team(target_file, diagnosis_to_use, attempt)
-                
-                success = True
-                break
+        if not suspects:
+            if round_num == 1:
+                print("✅ No suspects found. The build might already be clean!")
             else:
-                print(f"❌ FAIL: Fix did not compile. Compiler said:\n{errors}")
-                with open(target_file, 'w') as f:
-                    f.write(original_code) # Revert for next try
+                print("✅ GLOBAL SWEEP COMPLETE: All known errors have been patched!")
+            break # Exit the global loop entirely
+        
+        # Edge Case: The build failed because the config file is missing entirely
+        if category in ["DEPENDENCY", "CONFIG_SYNTAX"] and not os.path.exists(config_name):
+            print(f"📁 NOTICE: {config_name} is missing entirely. Creating an empty file for the AI...")
+            with open(config_name, 'w') as f:
+                f.write("") # Blank slate for the AI to populate
+            target_file = config_name
         else:
-            print("❌ ERROR: AI failed to provide a valid code block.")
+            # Standard flow: Let the AI pick the primary culprit for this round
+            print(f"🕵️ DISPATCHER: Analyzing suspects: {suspects}")
+            target_file = select_target_file(log_content, suspects)
 
-    if not success:
-        print("💀 ALL ATTEMPTS FAILED. Human intervention required.")
-    print("="*50)
+        if not target_file or target_file not in suspects + [config_name]:
+            print(f"💀 ERROR: AI picked an invalid target or no target. Halting sweep.")
+            break
+            
+        print(f"🎯 ROUND {round_num}: Targeting {target_file} for remediation.")
+
+        # Read the content of the target file
+        with open(target_file, 'r') as f:
+            original_code = f.read()
+
+        # 4. REMEDIATION LOOP (For this specific target file)
+        file_fixed = False
+        for attempt in range(1, MAX_RETRIES + 1):
+            print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES} for {target_file}...")
+            
+            # --- MEMORY CHECK ---
+            print("🔍 MEMORY: Searching for similar past experiences...")
+            past_remedy = memory.recall(log_content)
+            
+            if past_remedy:
+                print("💡 EUREKA: I found a highly similar error in my history!")
+                diagnosis_to_use = f"RECALLED REMEDY: {past_remedy}"
+                context = "" # Skip context fetching if we already know the answer
+            else:
+                # STAGE 1: Preliminary Diagnosis from scratch
+                print("🧠 STAGE 1: No memory found. Analyzing error from scratch...")
+                initial_diagnosis = get_diagnosis(original_code, log_content, "")
+                
+                # JIT Context Fetching
+                context = get_supporting_context(target_file, initial_diagnosis, original_code)
+                diagnosis_to_use = initial_diagnosis
+                
+                if context:
+                    print("🧠 STAGE 1.5: Refining diagnosis with discovered context...")
+                    diagnosis_to_use = get_diagnosis(original_code, log_content, context)
+            
+            print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis_to_use}\n")
+
+            if "API Error:" in diagnosis_to_use:
+                print("💀 ERROR: LLM Timeout. Retrying...")
+                continue
+
+            # STAGE 2: Code Generation
+            print(f"🛠️ STAGE 2: Generating full rewrite for {target_file}...")
+            raw_response = get_fixed_code(target_file, original_code, diagnosis_to_use, context)
+            
+            code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
+            
+            if code_block_match:
+                fixed_code = code_block_match.group(1).strip()
+                with open(target_file, 'w') as f:
+                    f.write(fixed_code)
+                    
+                # STAGE 3: Verification
+                verified, errors = verify_fix(target_file)
+                if verified:
+                    print(f"✅ SUCCESS: {target_file} fixed and verified!")
+                    
+                    # 1. Commit to Long-Term Memory!
+                    if not past_remedy:
+                        memory.learn(log_content, target_file, diagnosis_to_use)
+                    
+                    # 2. Push the code
+                    create_pull_request(diagnosis_to_use, target_file, attempt)
+                    
+                    # 3. Tell the team via Slack/Discord Webhook
+                    notify_team(target_file, "Partial fix applied, moving to next error...", round_num)
+                    
+                    file_fixed = True
+                    break
+                else:
+                    print(f"❌ FAIL: Fix did not compile. Compiler said:\n{errors}")
+                    with open(target_file, 'w') as f:
+                        f.write(original_code) # Revert for next try
+            else:
+                print("❌ ERROR: AI failed to provide a valid code block.")
+
+        # Evaluate the round
+        if file_fixed:
+            print(f"✔️ {target_file} patched. Looping back for a fresh scan...")
+            continue # Goes to the next round of the Global Loop!
+        else:
+            print(f"⚠️ Could not fix {target_file} after {MAX_RETRIES} attempts.")
+            print("💀 Halting the Global Sweep. Human intervention required.")
+            break # Exit the global loop
+
+    print("\n" + "="*50)
+    print("🏁 HYBRID HEALER AGENT: SWEEP PROTOCOL CONCLUDED.")
