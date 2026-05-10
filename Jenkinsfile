@@ -118,9 +118,8 @@ pipeline {
                     fi
                     
                     # 2. Update pip and install dependencies
-                    ./venv/bin/python3 -m pip install --upgrade pip
+                    
                     if [ -f "requirements.txt" ]; then
-                        ./venv/bin/pip install -r requirements.txt
                     fi
                     
                     # 3. Trigger Hybrid Healer in unbuffered mode
