@@ -192,7 +192,7 @@ def notify_team(target_file, diagnosis, attempt):
 # AI AGENT FUNCTIONS
 # ==========================================
 
-def get_diagnosis(file_content, error_log, supporting_context=""):
+def get_diagnosis(file_content, error_log,target_file, supporting_context=""):
     """STAGE 1: Now with 100% more peripheral vision."""
     url = "http://localhost:11434/api/generate"
     prompt = f"""You are a Senior SRE. Analyze the build failure.
@@ -207,6 +207,13 @@ def get_diagnosis(file_content, error_log, supporting_context=""):
     {supporting_context}
     
     TASK: Identify if the error is in the broken file or caused by a mismatch with supporting files.
+    CRITICAL DIRECTIVE - THE TARGET SWITCHER:
+You are currently analyzing the file: {target_file}. 
+If you realize the error is NOT caused by this file, but by a missing dependency or misconfiguration in a supporting file (like pom.xml, package.json, build.gradle, or requirements.txt), YOU MUST ABORT surgery on the current file.
+To do this, start your response EXACTLY with this phrase:
+SWITCH_TARGET: <filename>
+(For example: SWITCH_TARGET: pom.xml)
+Do not provide any code if you switch targets. Just provide the switch command and a brief explanation of why.
     DIAGNOSIS:"""
     
     try:
@@ -414,9 +421,11 @@ if __name__ == "__main__":
         # Extract the Surgical Fingerprint for this specific file
         file_specific_error = extract_error_snippet(master_log_content, target_file)
 
-        # 4. REMEDIATION LOOP
+        # 4. REMEDIATION LOOP (With Target Switching)
         file_fixed = False
-        for attempt in range(1, MAX_RETRIES + 1):
+        attempt = 1
+        
+        while attempt <= MAX_RETRIES:
             print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES} for {target_file}...")
             
             # --- MEMORY CHECK (Now uses Surgical Error & Language Wall) ---
@@ -430,21 +439,62 @@ if __name__ == "__main__":
             else:
                 print("🧠 STAGE 1: Analyzing error from scratch...")
                 # We pass the targeted error snippet to the AI so it doesn't get confused by other logs
-                initial_diagnosis = get_diagnosis(original_code, file_specific_error, "")
+                initial_diagnosis = get_diagnosis(original_code, file_specific_error, target_file, "")
                 context = get_supporting_context(target_file, initial_diagnosis, original_code)
                 diagnosis_to_use = initial_diagnosis
                 
                 if context:
                     print("🧠 STAGE 1.5: Refining diagnosis with discovered context...")
-                    diagnosis_to_use = get_diagnosis(original_code, file_specific_error, context)
+                    diagnosis_to_use = get_diagnosis(original_code, file_specific_error, target_file, context)
             
             print(f"\n🗣️ AI DIAGNOSIS:\n{diagnosis_to_use}\n")
 
             if "API Error:" in diagnosis_to_use:
                 print("💀 ERROR: LLM Timeout. Retrying...")
+                attempt += 1
                 continue
 
+            # ==========================================
+            # 🔀 THE TARGET SWITCHER INTERCEPTOR
+            # ==========================================
+            if "SWITCH_TARGET:" in diagnosis_to_use:
+                match = re.search(r"SWITCH_TARGET:\s*([a-zA-Z0-9_./-]+)", diagnosis_to_use)
+                if match:
+                    new_target = match.group(1).strip()
+                    
+                    # Validate the AI isn't hallucinating a random file
+                    # We check if it's in all suspects or a common configuration file
+                    if new_target in all_suspects or os.path.exists(new_target):
+                        print(f"\n🚨 TARGET SWITCH DETECTED! AI realized the true culprit is {new_target}.")
+                        
+                        # 1. Update the target
+                        target_file = new_target
+                        
+                        # 2. Read the new file's code (or create blank if missing config)
+                        if os.path.exists(target_file):
+                            with open(target_file, 'r') as f:
+                                original_code = f.read()
+                        else:
+                            original_code = "" 
+                            
+                        # 3. Update the language and fingerprint for the new file
+                        if ".py" in target_file: detected_lang = "python"
+                        elif ".js" in target_file or "package.json" in target_file: detected_lang = "javascript"
+                        elif ".cpp" in target_file or ".h" in target_file or "Makefile" in target_file: detected_lang = "cpp"
+                        elif ".java" in target_file or "pom.xml" in target_file or "build.gradle" in target_file: detected_lang = "java"
+                        
+                        file_specific_error = extract_error_snippet(master_log_content, target_file)
+                        
+                        # 4. RESET THE LOOP
+                        print(f"🔄 Rebooting Remediation Loop for {target_file}...")
+                        attempt = 1 
+                        continue 
+                    else:
+                        print(f"⚠️ AI requested switch to {new_target}, but it is not a valid project file. Ignoring.")
+
+            # ==========================================
             # STAGE 2: Code Generation
+            # ==========================================
             print(f"🛠️ STAGE 2: Generating full rewrite for {target_file}...")
             raw_response = get_fixed_code(target_file, original_code, diagnosis_to_use, context)
             code_block_match = re.search(r"`{3}(?:[a-zA-Z0-9_+-]+)?\n(.*?)\n`{3}", raw_response, re.DOTALL)
@@ -478,11 +528,13 @@ if __name__ == "__main__":
                 else:
                     print(f"❌ FAIL: Fix did not compile. Compiler said:\n{errors}")
                     # Update the error snippet to include the NEW failure for the next attempt
-                    file_specific_error = errors 
+                    file_specific_error = errors[:500] 
                     with open(target_file, 'w') as f:
                         f.write(original_code) 
             else:
                 print("❌ ERROR: AI failed to provide a valid code block.")
+                
+            attempt += 1
 
         if file_fixed:
             print(f"✔️ {target_file} patched. Looping back...")
