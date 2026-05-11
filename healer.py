@@ -393,6 +393,7 @@ if __name__ == "__main__":
         
         # 2. GET SUSPECTS
         all_suspects = get_suspect_list(master_log_content)
+        # FILTER: Remove files we've already patched in this session
         suspects = [f for f in all_suspects if f not in patched_files]
         
         if not suspects:
@@ -411,7 +412,7 @@ if __name__ == "__main__":
         detected_lang = "java" 
         if ".py" in target_file: detected_lang = "python"
         elif ".js" in target_file or "package.json" in target_file: detected_lang = "javascript"
-        elif ".cpp" in target_file or ".h" in target_file: detected_lang = "cpp"
+        elif ".cpp" in target_file or ".h" in target_file or "Makefile" in target_file: detected_lang = "cpp"
             
         print(f"🎯 ROUND {round_num}: Targeting {target_file} ({detected_lang})")
 
@@ -421,14 +422,14 @@ if __name__ == "__main__":
         # Extract the Surgical Fingerprint for this specific file
         file_specific_error = extract_error_snippet(master_log_content, target_file)
 
-        # 4. REMEDIATION LOOP (With Target Switching)
+        # 4. REMEDIATION LOOP (With Target Switching & Infinite Loop Protection)
         file_fixed = False
         attempt = 1
         
         while attempt <= MAX_RETRIES:
             print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES} for {target_file}...")
             
-            # --- MEMORY CHECK (Now uses Surgical Error & Language Wall) ---
+            # --- MEMORY CHECK (Uses Surgical Error & Language Wall) ---
             print("🔍 MEMORY: Searching for similar past experiences...")
             past_remedy = memory.recall(file_specific_error, detected_lang)
             
@@ -438,7 +439,7 @@ if __name__ == "__main__":
                 context = "" 
             else:
                 print("🧠 STAGE 1: Analyzing error from scratch...")
-                # We pass the targeted error snippet to the AI so it doesn't get confused by other logs
+                # We pass the targeted error snippet to the AI so it doesn't get confused
                 initial_diagnosis = get_diagnosis(original_code, file_specific_error, target_file, "")
                 context = get_supporting_context(target_file, initial_diagnosis, original_code)
                 diagnosis_to_use = initial_diagnosis
@@ -455,37 +456,41 @@ if __name__ == "__main__":
                 continue
 
             # ==========================================
-            # 🔀 THE TARGET SWITCHER INTERCEPTOR
+            # 🔀 THE TARGET SWITCHER INTERCEPTOR (V3)
             # ==========================================
             if "SWITCH_TARGET:" in diagnosis_to_use:
                 match = re.search(r"SWITCH_TARGET:\s*([a-zA-Z0-9_./-]+)", diagnosis_to_use)
                 if match:
                     new_target = match.group(1).strip()
                     
-                    # Validate the AI isn't hallucinating a random file
-                    # We check if it's in all suspects or a common configuration file
-                    if new_target in all_suspects or os.path.exists(new_target):
+                    # SAFETY: Prevent infinite self-switching
+                    if new_target == target_file:
+                        print(f"🧐 NOTICE: AI suggested {new_target}, but we are already there. Proceeding to fix.")
+                        # Strip the command out so it doesn't trip up Stage 2
+                        diagnosis_to_use = diagnosis_to_use.replace(f"SWITCH_TARGET: {new_target}", "")
+                        
+                    # REALITY CHECK: Ensure the file is actually part of the project
+                    elif new_target in all_suspects or os.path.exists(new_target):
                         print(f"\n🚨 TARGET SWITCH DETECTED! AI realized the true culprit is {new_target}.")
                         
-                        # 1. Update the target
                         target_file = new_target
                         
-                        # 2. Read the new file's code (or create blank if missing config)
+                        # Read the new file's code (or create blank if missing config)
                         if os.path.exists(target_file):
                             with open(target_file, 'r') as f:
                                 original_code = f.read()
                         else:
                             original_code = "" 
                             
-                        # 3. Update the language and fingerprint for the new file
+                        # Update the language for the new file
                         if ".py" in target_file: detected_lang = "python"
                         elif ".js" in target_file or "package.json" in target_file: detected_lang = "javascript"
                         elif ".cpp" in target_file or ".h" in target_file or "Makefile" in target_file: detected_lang = "cpp"
                         elif ".java" in target_file or "pom.xml" in target_file or "build.gradle" in target_file: detected_lang = "java"
                         
-                        file_specific_error = extract_error_snippet(master_log_content, target_file)
+                        # CRITICAL: We do NOT update the `file_specific_error` here.
+                        # We keep the old error so the AI remembers WHY it is editing this new file.
                         
-                        # 4. RESET THE LOOP
                         print(f"🔄 Rebooting Remediation Loop for {target_file}...")
                         attempt = 1 
                         continue 
@@ -510,7 +515,7 @@ if __name__ == "__main__":
                     print(f"✅ SUCCESS: {target_file} fixed and verified!")
                     patched_files.append(target_file)
                     
-                    # Learn the new fix (Now includes language!)
+                    # Learn the new fix (Includes language tag)
                     if not past_remedy:
                         memory.learn(file_specific_error, target_file, diagnosis_to_use, detected_lang)
                     
@@ -518,7 +523,6 @@ if __name__ == "__main__":
                     notify_team(target_file, "Partial fix applied...", round_num)
                     
                     # --- THE LOG SCRUBBER ---
-                    # Remove any line from the master log that mentions the file we just fixed
                     print(f"🧹 SCRUBBER: Removing {target_file} errors from log for next round.")
                     scrubbed_lines = [line for line in master_log_content.split('\n') if target_file not in line]
                     master_log_content = "\n".join(scrubbed_lines)
@@ -530,12 +534,13 @@ if __name__ == "__main__":
                     # Update the error snippet to include the NEW failure for the next attempt
                     file_specific_error = errors[:500] 
                     with open(target_file, 'w') as f:
-                        f.write(original_code) 
+                        f.write(original_code) # Revert
             else:
                 print("❌ ERROR: AI failed to provide a valid code block.")
                 
             attempt += 1
 
+        # Evaluate the round
         if file_fixed:
             print(f"✔️ {target_file} patched. Looping back...")
             continue 
