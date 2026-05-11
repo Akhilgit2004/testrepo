@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include "config.h"
 
 
@@ -13,8 +14,8 @@ struct ServerNode {
     std::string hostname;
     std::string status;
     double cpu_usage;
-    double ram_usage
-} 
+    double ram_usage;  // <-- Added semicolon
+};  // <-- Added semicolon after struct definition
 
 // ==========================================
 // MOCK DATABASE INTERFACE
@@ -42,7 +43,7 @@ public:
 class ServerFleetManager {
 private:
     std::vector<ServerNode> fleet;
-    DatabaseConnector db
+    DatabaseConnector db;  // <-- Added semicolon
 
 public:
     ServerFleetManager() {
@@ -62,7 +63,7 @@ public:
     void optimizeFleet() {
         std::cout << "[Fleet] Optimizing fleet based on CPU usage...\n";
         
-        // This requires <algorithm> which is intentionally missing
+        // This requires <algorithm> which is now included
         std::sort(fleet.begin(), fleet.end(), [](const ServerNode& a, const ServerNode& b) {
             return a.cpu_usage < b.cpu_usage;
         });
@@ -86,8 +87,7 @@ public:
         
         for (size_t i = 0; i < fleet.size(); i++) {
             if (fleet[i].status == "ONLINE") {
-            
-                active_cnt++; 
+                active_count++;  // <-- Fixed typo from active_cnt to active_count
             }
         }
         
