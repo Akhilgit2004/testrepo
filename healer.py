@@ -20,20 +20,35 @@ BUILD_REGISTRY = {
 # ==========================================
 # UTILITY FUNCTIONS
 # ==========================================
-def get_suspect_list(error_log):
-    """Gathers all files that could possibly be related to the error."""
-    # 1. Find any file mentioned in the log
-    files_in_log = re.findall(r'(\b[a-zA-Z0-9_./-]+\.(?:java|py|js|cpp|h|xml|json|txt))\b', error_log)
+def get_suspect_list(log_content):
+    """
+    Recursively scans the project for files mentioned in the Jenkins log.
+    Returns the relative path so the agent can find files nested in folders.
+    """
+    suspects = []
     
-    configs = ["pom.xml", "requirements.txt", "package.json", "Makefile"]
+    # Do not scan inside these directories
+    IGNORE_DIRS = {'.git', 'venv', 'target', 'node_modules', 'build', '__pycache__', '.idea', '.vscode'}
     
-    # 2. FILTER: Remove 'healer.py' and any other non-project files
-    # We use a list comprehension to build the list while ignoring the agent itself
-    suspects = [
-        f for f in set(files_in_log + configs) 
-        if os.path.exists(f) and f != "healer.py" and not f.startswith("venv/")
-    ]
-    
+    # Walk through the directory tree starting from the root ('.')
+    for root, dirs, files in os.walk('.'):
+        # Modify dirs in-place to skip ignored directories entirely
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        
+        for file in files:
+            # We don't want the agent trying to perform surgery on itself
+            if file == "healer.py":
+                continue
+                
+            # If the bare filename (e.g., 'Main.java') appears anywhere in the log...
+            if file in log_content:
+                # Construct the proper relative path (e.g., 'src/main/java/Main.java')
+                # We strip the leading './' to keep the paths clean
+                file_path = os.path.relpath(os.path.join(root, file), '.').replace('./', '')
+                
+                if file_path not in suspects:
+                    suspects.append(file_path)
+                    
     return suspects
 
 def select_target_file(error_log, suspects):
