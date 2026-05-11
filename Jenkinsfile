@@ -28,16 +28,7 @@ pipeline {
                         fi
                     fi
 
-                    # 2. Check Java (Standalone)
-                    if ls *.java 1> /dev/null 2>&1; then
-                        echo "🛠️ Compiling Standalone Java files..."
-                        if ! javac *.java; then
-                            echo "❌ Java Compilation Failed"
-                            BUILD_FAILED=1
-                        fi
-                    fi
-
-                    # 3. Check Maven
+                    # 2. Check Maven (Prioritize over Standalone Java)
                     if [ -f "pom.xml" ]; then
                         echo "🛠️ Running Maven Build..."
                         if ! mvn clean compile; then
@@ -46,7 +37,7 @@ pipeline {
                         fi
                     fi
 
-                    # 4. Check Gradle
+                    # 3. Check Gradle (Prioritize over Standalone Java)
                     if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
                         echo "🛠️ Running Gradle Build..."
                         if [ -f "gradlew" ]; then
@@ -57,6 +48,17 @@ pipeline {
                         else
                             if ! gradle build; then
                                 echo "❌ Gradle Build Failed"
+                                BUILD_FAILED=1
+                            fi
+                        fi
+                    fi
+
+                    # 4. Check Java (Standalone - ONLY if no Maven or Gradle is found)
+                    if [ ! -f "pom.xml" ] && [ ! -f "build.gradle" ] && [ ! -f "build.gradle.kts" ]; then
+                        if ls *.java 1> /dev/null 2>&1; then
+                            echo "🛠️ Compiling Standalone Java files..."
+                            if ! javac *.java; then
+                                echo "❌ Java Compilation Failed"
                                 BUILD_FAILED=1
                             fi
                         fi
@@ -117,8 +119,7 @@ pipeline {
                         python3 -m venv venv
                     fi
                     
-                    
-                    # 3. Trigger Hybrid Healer in unbuffered mode
+                    # 2. Trigger Hybrid Healer in unbuffered mode
                     ./venv/bin/python3 -u healer.py
                 '''
             }
