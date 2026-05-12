@@ -110,6 +110,12 @@ pipeline {
             echo "🔥 Build failed! Initiating AI SRE Agent..."
             
             script {
+                // 1. Capture the ACTUAL log of this current build directly from Jenkins
+                def currentLog = currentBuild.rawBuild.getLog(2000).join("\n")
+                
+                // 2. Save it to a local file the agent can read
+                writeFile file: 'current_build.log', text: currentLog
+
                 // Capture the Git URL so the pipeline knows where to push
                 env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
                 
@@ -133,8 +139,8 @@ pipeline {
                             python3 -m venv venv
                         fi
                         
-                        # 4. Trigger Hybrid Healer in unbuffered mode
-                        ./venv/bin/python3 -u healer.py
+                        # 4. Trigger Hybrid Healer and pass the log file directly
+                        ./venv/bin/python3 -u healer.py --log_file current_build.log
                     '''
                 }
             }
