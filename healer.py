@@ -171,7 +171,7 @@ def create_pull_request(explanation, target_file, attempt):
             auth_url = repo_url.replace("https://", f"https://{gh_token}@")
             subprocess.run(['git', 'remote', 'set-url', 'origin', auth_url], check=True)
 
-        subprocess.run(['git', 'checkout', '-b', branch_name], check=True)
+        subprocess.run(['git', 'checkout', '-B', branch_name], check=True)
         subprocess.run(['git', 'add', target_file], check=True)
         subprocess.run(['git', 'commit', '-m', f"fix: AI repair for {target_file}"], check=True)
         subprocess.run(['git', 'push', '-u', 'origin', branch_name], check=True)
