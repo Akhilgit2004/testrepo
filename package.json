@@ -1,0 +1,10 @@
+{
+  "name": "broken-node-app",
+  "version": "1.0.0",
+  "description": "A test for the SRE agent",
+  "main": "index.js",
+  "scripts": {
+    "build": "node index.js"
+  },
+  "dependencies": {}
+}

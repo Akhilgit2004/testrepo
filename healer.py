@@ -1,3 +1,4 @@
+import sys
 import os
 import requests
 import subprocess
@@ -12,10 +13,37 @@ from chromadb.utils import embedding_functions
 MODEL = "qwen3:14b"
 MAX_RETRIES = 2
 BUILD_REGISTRY = {
-    "java": {"config": "pom.xml", "tool": "mvn", "check": "mvn clean compile"},
-    "python": {"config": "requirements.txt", "tool": "pip", "check": "python3 -m py_compile"},
-    "javascript": {"config": "package.json", "tool": "npm", "check": "npm install && npm run build"},
-    "cpp": {"config": "Makefile", "tool": "make", "check": "make"}
+    "java": {
+        "verify": "mvn clean compile",
+        "config": "pom.xml",
+        "test_cmd": "mvn test"
+    },
+    "python": {
+        "verify": "python3 -m py_compile {file}",
+        "config": "requirements.txt",
+        "test_cmd": "pytest"
+    },
+    "cpp": {
+        "verify": "g++ {file} -o app",
+        "config": "Makefile",
+        "test_cmd": "./app"
+    },
+    # --- NEW ADDITIONS ---
+    "javascript": {
+        "verify": "npm run build",
+        "config": "package.json",
+        "test_cmd": "npm test"
+    },
+    "go": {
+        "verify": "go build ./...",
+        "config": "go.mod",
+        "test_cmd": "go test ./..."
+    },
+    "rust": {
+        "verify": "cargo build",
+        "config": "Cargo.toml",
+        "test_cmd": "cargo test"
+    }
 }
 # ==========================================
 # UTILITY FUNCTIONS
@@ -284,6 +312,26 @@ def extract_error_snippet(log_text, target_filename):
     
     return log_text[:500]
 
+def autonomous_scan():
+    """
+    Uses local tools to find errors without needing a Jenkins log.
+    """
+    print("🔎 AGENT: Initiating Deep Audit...")
+    discovered_errors = ""
+    
+    # Run a quick lint check on the whole directory
+    # For Python:
+    lint_output = os.popen("flake8 . --select=E9,F63,F7,F82 --show-source").read()
+    
+    if lint_output:
+        print("🚨 AUDIT: Found syntax/logic errors independently!")
+        discovered_errors = lint_output
+    else:
+        print("✅ AUDIT: No obvious syntax errors found.")
+        
+    return discovered_errors
+
+
 class VectorMemory:
     def __init__(self, db_path="./agent_memory"):
         self.client = chromadb.PersistentClient(path=db_path)
@@ -390,12 +438,33 @@ def classify_error(error_log):
 # MAIN ORCHESTRATOR
 # ==========================================
 if __name__ == "__main__":
+
+    
     print("\n" + "="*50)
     print("🚨 HYBRID HEALER AGENT: INITIATING GLOBAL SWEEP...")
+    master_log_content = get_latest_jenkins_log()
+    
+    if not master_log_content or "SUCCESS" in master_log_content:
+        print("🤔 Log looks clean. Switching to Autonomous Audit Mode...")
+        master_log_content = autonomous_scan()
+        
+    if not master_log_content:
+        print("🏝️ Nothing to fix. Going back to sleep.")
+        sys.exit(0) # Fixed from os.exit(0)
     
     memory = VectorMemory()
     patched_files = []
     max_global_rounds = 5 
+    
+    # Language configuration mapping for quick lookups
+    config_map = {
+        ".py": "python", "requirements.txt": "python",
+        ".js": "javascript", ".ts": "javascript", "package.json": "javascript",
+        ".go": "go", "go.mod": "go",
+        ".rs": "rust", "Cargo.toml": "rust",
+        ".java": "java", "pom.xml": "java", "build.gradle": "java", ".kts": "java",
+        ".cpp": "cpp", ".h": "cpp", "Makefile": "cpp"
+    }
     
     # We fetch the log ONCE outside the loop, and scrub it down as we fix things
     master_log_content = get_latest_jenkins_log()
@@ -423,11 +492,9 @@ if __name__ == "__main__":
             print(f"💀 ERROR: AI picked an invalid target. Halting sweep.")
             break
             
-        # 3. DETECT TARGET LANGUAGE
-        detected_lang = "java" 
-        if ".py" in target_file: detected_lang = "python"
-        elif ".js" in target_file or "package.json" in target_file: detected_lang = "javascript"
-        elif ".cpp" in target_file or ".h" in target_file or "Makefile" in target_file: detected_lang = "cpp"
+        # 3. DETECT TARGET LANGUAGE (Expanded Polyglot Support)
+        file_ext = os.path.splitext(target_file)[1]
+        detected_lang = config_map.get(file_ext, config_map.get(os.path.basename(target_file), "java"))
             
         print(f"🎯 ROUND {round_num}: Targeting {target_file} ({detected_lang})")
 
@@ -497,11 +564,9 @@ if __name__ == "__main__":
                         else:
                             original_code = "" 
                             
-                        # Update the language for the new file
-                        if ".py" in target_file: detected_lang = "python"
-                        elif ".js" in target_file or "package.json" in target_file: detected_lang = "javascript"
-                        elif ".cpp" in target_file or ".h" in target_file or "Makefile" in target_file: detected_lang = "cpp"
-                        elif ".java" in target_file or "pom.xml" in target_file or "build.gradle" in target_file: detected_lang = "java"
+                        # Update the language for the new file dynamically
+                        new_file_ext = os.path.splitext(target_file)[1]
+                        detected_lang = config_map.get(new_file_ext, config_map.get(os.path.basename(target_file), "java"))
                         
                         # CRITICAL: We do NOT update the `file_specific_error` here.
                         # We keep the old error so the AI remembers WHY it is editing this new file.
