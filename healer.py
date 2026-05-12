@@ -437,8 +437,8 @@ def classify_error(error_log):
 # ==========================================
 # MAIN ORCHESTRATOR
 # ==========================================
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     
     print("\n" + "="*50)
     print("🚨 HYBRID HEALER AGENT: INITIATING GLOBAL SWEEP...")
@@ -450,7 +450,7 @@ if __name__ == "__main__":
         
     if not master_log_content:
         print("🏝️ Nothing to fix. Going back to sleep.")
-        sys.exit(0) # Fixed from os.exit(0)
+        sys.exit(0) 
     
     memory = VectorMemory()
     patched_files = []
@@ -504,23 +504,29 @@ if __name__ == "__main__":
         # Extract the Surgical Fingerprint for this specific file
         file_specific_error = extract_error_snippet(master_log_content, target_file)
 
-        # 4. REMEDIATION LOOP (With Target Switching & Infinite Loop Protection)
+        # 4. REMEDIATION LOOP (With Target Switching & Memory-Fail Logic)
         file_fixed = False
         attempt = 1
         
         while attempt <= MAX_RETRIES:
             print(f"\n🔄 ATTEMPT {attempt}/{MAX_RETRIES} for {target_file}...")
             
-            # --- MEMORY CHECK (Uses Surgical Error & Language Wall) ---
-            print("🔍 MEMORY: Searching for similar past experiences...")
-            past_remedy = memory.recall(file_specific_error, detected_lang)
+            # --- IMPROVED MEMORY CHECK (The Reality Check) ---
+            past_remedy = None
+            if attempt == 1:
+                print("🔍 MEMORY: Searching for similar past experiences...")
+                past_remedy = memory.recall(file_specific_error, detected_lang)
             
             if past_remedy:
-                print("💡 EUREKA: I found a highly similar error in my history!")
+                print("💡 EUREKA: I found a remedy in history!")
                 diagnosis_to_use = f"RECALLED REMEDY: {past_remedy}"
                 context = "" 
             else:
-                print("🧠 STAGE 1: Analyzing error from scratch...")
+                if attempt > 1:
+                    print("⚠️ MEMORY FAIL: Past experience was incorrect. Forcing fresh analysis...")
+                else:
+                    print("🧠 STAGE 1: Analyzing error from scratch...")
+                
                 # We pass the targeted error snippet to the AI so it doesn't get confused
                 initial_diagnosis = get_diagnosis(original_code, file_specific_error, target_file, "")
                 context = get_supporting_context(target_file, initial_diagnosis, original_code)
