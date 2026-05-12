@@ -7,6 +7,7 @@ import json
 import time
 import chromadb
 from chromadb.utils import embedding_functions
+import argparse
 # ==========================================
 # CONFIGURATION
 # ==========================================
@@ -448,7 +449,21 @@ if __name__ == "__main__":
     
     print("\n" + "="*50)
     print("🚨 HYBRID HEALER AGENT: INITIATING GLOBAL SWEEP...")
-    master_log_content = get_latest_jenkins_log()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--log_file", help="Path to local Jenkins log")
+    args = parser.parse_args()
+
+    print("\n" + "="*50)
+    print("🚨 HYBRID HEALER AGENT: INITIATING GLOBAL SWEEP...")
+
+    # LOG LOGIC: Prioritize the injected log file
+    if args.log_file and os.path.exists(args.log_file):
+        print(f"📖 Reading local log file: {args.log_file}")
+        with open(args.log_file, 'r') as f:
+            master_log_content = f.read()
+    else:
+        # Fallback to API if no file is provided
+        master_log_content = get_latest_jenkins_log()
     
     if not master_log_content or "SUCCESS" in master_log_content:
         print("🤔 Log looks clean. Switching to Autonomous Audit Mode...")
