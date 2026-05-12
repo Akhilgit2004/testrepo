@@ -110,18 +110,33 @@ pipeline {
             echo "🔥 Build failed! Initiating AI SRE Agent..."
             
             script {
-                // Capture the Git URL so the Python script knows where to push.
+                // Capture the Git URL so the pipeline knows where to push
                 env.GIT_URL = sh(script: "git config --get remote.origin.url", returnStdout: true).trim()
                 
-                sh '''
-                    # 1. Ensure virtual environment exists
-                    if [ ! -d "venv" ]; then
-                        python3 -m venv venv
-                    fi
+                // IMPORTANT: Ensure you have created a Jenkins Username/Password credential named 'github-token-id'
+                withCredentials([usernamePassword(credentialsId: 'github-token-id', 
+                                 passwordVariable: 'GIT_PASSWORD', 
+                                 usernameVariable: 'GIT_USERNAME')]) {
                     
-                    # 2. Trigger Hybrid Healer in unbuffered mode
-                    ./venv/bin/python3 -u healer.py
-                '''
+                    sh '''
+                        # 1. Configure Git to know WHO is pushing
+                        git config user.email "healer-agent@jenkins.local"
+                        git config user.name "AI Healer Agent"
+                        
+                        # 2. Inject credentials into the remote URL dynamically
+                        # This rewrites https://github.com/... to https://user:token@github.com/...
+                        AUTH_REPO_URL=$(echo $GIT_URL | sed "s|https://|https://${GIT_USERNAME}:${GIT_PASSWORD}@|")
+                        git remote set-url origin $AUTH_REPO_URL
+
+                        # 3. Ensure virtual environment exists
+                        if [ ! -d "venv" ]; then
+                            python3 -m venv venv
+                        fi
+                        
+                        # 4. Trigger Hybrid Healer in unbuffered mode
+                        ./venv/bin/python3 -u healer.py
+                    '''
+                }
             }
         }
     }
