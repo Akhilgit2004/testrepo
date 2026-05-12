@@ -447,8 +447,6 @@ def classify_error(error_log):
 
 if __name__ == "__main__":
     
-    print("\n" + "="*50)
-    print("🚨 HYBRID HEALER AGENT: INITIATING GLOBAL SWEEP...")
     parser = argparse.ArgumentParser()
     parser.add_argument("--log_file", help="Path to local Jenkins log")
     args = parser.parse_args()
@@ -465,17 +463,27 @@ if __name__ == "__main__":
         # Fallback to API if no file is provided
         master_log_content = get_latest_jenkins_log()
     
-    if not master_log_content or "SUCCESS" in master_log_content:
-        print("🤔 Log looks clean. Switching to Autonomous Audit Mode...")
-        master_log_content = autonomous_scan()
-        
     if not master_log_content:
-        print("🏝️ Nothing to fix. Going back to sleep.")
-        sys.exit(0) 
+        print("🏝️ Log is empty. Going back to sleep.")
+        sys.exit(0)
+
+    # --- THE SMARTER CHECK: Priority-Based Failure Detection ---
+    failure_keywords = ["ERROR", "FAIL", "FAILED", "SyntaxError", "multiple definition", "command not found"]
+    is_actually_broken = any(word in master_log_content for word in failure_keywords)
+
+    if not is_actually_broken and "SUCCESS" in master_log_content:
+        print("🤔 Log looks clean (No critical keywords found). Switching to Autonomous Audit Mode...")
+        master_log_content = autonomous_scan()
+        if not master_log_content:
+            print("🏝️ Nothing to fix. Going back to sleep.")
+            sys.exit(0)
+    else:
+        print("🚩 FAILURE DETECTED: Proceeding with remediation loop...")
     
     memory = VectorMemory()
     patched_files = []
     max_global_rounds = 5 
+    MAX_RETRIES = 3 # Ensure this is defined
     
     # Language configuration mapping for quick lookups
     config_map = {
@@ -486,9 +494,6 @@ if __name__ == "__main__":
         ".java": "java", "pom.xml": "java", "build.gradle": "java", ".kts": "java",
         ".cpp": "cpp", ".h": "cpp", "Makefile": "cpp"
     }
-    
-    # We fetch the log ONCE outside the loop, and scrub it down as we fix things
-    master_log_content = get_latest_jenkins_log()
     
     for round_num in range(1, max_global_rounds + 1):
         print(f"\n🌐 GLOBAL REPAIR ROUND {round_num}/{max_global_rounds}")
