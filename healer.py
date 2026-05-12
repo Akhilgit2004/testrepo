@@ -156,32 +156,38 @@ def verify_fix(target_file):
     except Exception as e:
         return False, str(e)
 
-def create_pull_request(explanation, target_file, attempt):
-    """Commits code and opens a GitHub Pull Request using GITHUB_TOKEN."""
-    build_id = os.environ.get('BUILD_ID', 'manual')
-    branch_name = f"healer-fix-{build_id}"
-    gh_token = os.environ.get('GITHUB_TOKEN')
-    repo_url = os.environ.get('GIT_URL')
-
+def create_pull_request(diagnosis, target_file, attempt):
+    timestamp = int(time.time())
+    branch_name = f"healer-fix-{timestamp}"
+    
+    print(f"🚀 GIT: Preparing to push fix for {target_file}...")
+    
     try:
-        subprocess.run(['git', 'config', 'user.name', 'Healer Agent'], check=True)
-        subprocess.run(['git', 'config', 'user.email', 'healer@agent.ai'], check=True)
-
-        if gh_token and repo_url:
-            auth_url = repo_url.replace("https://", f"https://{gh_token}@")
-            subprocess.run(['git', 'remote', 'set-url', 'origin', auth_url], check=True)
-
+        # 1. Force branch creation/reset
         subprocess.run(['git', 'checkout', '-B', branch_name], check=True)
-        subprocess.run(['git', 'add', target_file], check=True)
-        subprocess.run(['git', 'commit', '-m', f"fix: AI repair for {target_file}"], check=True)
-        subprocess.run(['git', 'push', '-u', 'origin', branch_name], check=True)
         
-        pr_body = f"## 🚨 Automated Fix Report\n**Diagnosis:**\n{explanation}"
-        subprocess.run(['gh', 'pr', 'create', '--title', f"🤖 AI Fix: {target_file}", '--body', pr_body, '--head', branch_name, '--base', 'main'], check=True)
-        return True
-    except Exception as e:
-        print(f"❌ Git Error: {e}")
-        return False
+        # 2. Add the specific file
+        subprocess.run(['git', 'add', target_file], check=True)
+        
+        # 3. CHECK: Are there actually any changes staged?
+        # 'git diff --cached --exit-code' returns 0 if no changes, 1 if changes exist
+        result = subprocess.run(['git', 'diff', '--cached', '--exit-code'], capture_output=True)
+        
+        if result.returncode == 0:
+            print(f"🤔 GIT: No actual changes detected for {target_file}. It might already be fixed. Skipping commit.")
+            return # Exit early, no need to push
+            
+        # 4. Commit and Push
+        commit_msg = f"fix: AI repair for {target_file} (Attempt {attempt})"
+        subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
+        
+        # Using --force to ensure we overwrite any weirdness on the remote
+        subprocess.run(['git', 'push', '-u', 'origin', branch_name, '--force'], check=True)
+        
+        print(f"✅ GIT: Successfully pushed {target_file} to {branch_name}")
+        
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Git Error: {e.output.decode() if e.output else e}")
     
 
 WEBHOOK_URL="https://discord.com/api/webhooks/1502582315354689578/sZDegYsairWMZrCuLrLsEHI0UAm3QAbTzZpmvtSKDIw1vYT2_Ww9_AOSefLciug3px3R/slack"
